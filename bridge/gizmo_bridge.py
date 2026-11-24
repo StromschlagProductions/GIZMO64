@@ -1,8 +1,11 @@
 """Lokale TCP-Brücke zwischen Ultimate-Modem und Ollama."""
+import csv
+import io
 import json
 import re
 import socket
 import subprocess
+import sys
 import threading
 import unicodedata
 import urllib.error
@@ -26,8 +29,9 @@ END = "[[GIZMO:END]]"
 
 
 def ascii_screen(text):
-    text = re.sub(r"<think>.*?</think>", "", text, flags=re.I | re.S)
-    text = re.sub(r"<think>.*", "", text, flags=re.I | re.S)
+    text = re.sub(r"<think\b[^>]*>.*?</think\s*>", "", text, flags=re.I | re.S)
+    text = re.sub(r"<think\b[^>]*>.*\Z", "", text, flags=re.I | re.S)
+    text = re.sub(r"</think\s*>", "", text, flags=re.I)
     text = text.replace("Ä", "Ae").replace("Ö", "Oe").replace("Ü", "Ue")
     text = text.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss")
     text = unicodedata.normalize("NFKD", text)
@@ -63,6 +67,8 @@ class Bridge:
         self.server = None
         self.clients = set()
         self.lock = threading.Lock()
+        self.stop_lock = threading.Lock()
+        self.ollama_lock = threading.Lock()
         self.ollama = None
 
     def _load_facts(self):
@@ -85,43 +91,80 @@ class Bridge:
             return False
 
     def start_ollama(self):
-        if self._ollama_ready():
-            return
-        flags = subprocess.CREATE_NEW_PROCESS_GROUP if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP") else 0
-        self.ollama = subprocess.Popen(["ollama", "serve"], creationflags=flags,
-                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        for _ in range(40):
-            if self.stop_event.wait(0.25):
-                return
+        with self.ollama_lock:
+            if self.stop_event.is_set():
+                raise RuntimeError("Bruecke wird beendet")
             if self._ollama_ready():
+                print("[+] Ollama bereit", flush=True)
                 return
-        raise RuntimeError("Ollama wurde nicht bereit")
+            print("[+] Starte Ollama...", flush=True)
+            flags = subprocess.CREATE_NEW_PROCESS_GROUP if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP") else 0
+            self.ollama = subprocess.Popen(["ollama", "serve"], creationflags=flags,
+                                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            for _ in range(80):
+                if self.stop_event.wait(0.25):
+                    raise RuntimeError("Ollama-Start abgebrochen")
+                if self._ollama_ready():
+                    print("[+] Ollama bereit", flush=True)
+                    return
+            raise RuntimeError("Ollama wurde nicht bereit")
+
+    def _stop_ollama(self):
+        if sys.platform == "win32":
+            # Zuerst Eltern samt Prozessbaum beenden, dann verbliebene Ollama-Prozesse.
+            try:
+                for image in ("ollama app.exe", "ollama.exe", "ollama_llama_server.exe"):
+                    subprocess.run(["taskkill", "/F", "/T", "/IM", image],
+                                   capture_output=True, check=False, timeout=10)
+                for _ in range(3):
+                    listing = subprocess.run(["tasklist", "/FO", "CSV", "/NH"],
+                                             capture_output=True, text=True, check=True, timeout=10)
+                    processes = [row for row in csv.reader(io.StringIO(listing.stdout))
+                                 if len(row) > 1 and "ollama" in row[0].lower()]
+                    if not processes:
+                        break
+                    for process in processes:
+                        subprocess.run(["taskkill", "/F", "/T", "/PID", process[1]],
+                                       capture_output=True, check=False, timeout=10)
+                else:
+                    print("[!] Ollama-Prozesse noch sichtbar", flush=True)
+            except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+                print(f"[!] Ollama-Prozesspruefung fehlgeschlagen: {error}", flush=True)
+        if self.ollama:
+            if self.ollama.poll() is None:
+                self.ollama.terminate()
+                try:
+                    self.ollama.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    self.ollama.kill()
+                    self.ollama.wait()
+            self.ollama = None
+        print("[+] Ollama-Prozesse geprueft", flush=True)
 
     def stop(self):
-        self.stop_event.set()
-        if self.server:
-            self.server.close()
-            self.server = None
-        with self.lock:
-            clients = list(self.clients)
-        for client in clients:
-            try:
-                client.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
-            client.close()
-        if self.ollama:
-            self.ollama.terminate()
-            try:
-                self.ollama.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.ollama.kill()
-                self.ollama.wait()
-            self.ollama = None
+        with self.stop_lock:
+            if self.stop_event.is_set():
+                return
+            print("[.] Fahre GIZMO-Bruecke herunter...", flush=True)
+            self.stop_event.set()
+            if self.server:
+                self.server.close()
+                self.server = None
+            with self.lock:
+                clients = list(self.clients)
+            for client in clients:
+                try:
+                    client.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+                client.close()
+            self._stop_ollama()
+            print("[+] Bruecke beendet", flush=True)
 
     def _chat(self, prompt):
-        self.start_ollama()
-        messages = [{"role": "system", "content": self.config["personality"]}]
+        if self.stop_event.is_set():
+            raise RuntimeError("Bruecke wird beendet")
+        messages = [{"role": "system", "content": self.config["personality"] + " /no_think"}]
         if self.facts:
             messages.append({"role": "system", "content": "Gemerkte Fakten: " + "; ".join(self.facts[-20:])})
         messages.extend(self.context[-20:])
@@ -155,15 +198,19 @@ class Bridge:
                 answer = " | ".join(self.facts[-5:]) if self.facts else "NOCH KEINE FAKTEN GESPEICHERT."
             else:
                 answer = self._chat(prompt)
+            lines = ascii_screen(answer)
             self._send(client, BEGIN)
-            for line in ascii_screen(answer):
+            for line in lines:
                 self._send(client, line)
             self._send(client, END)
+            for line in lines:
+                print(f"GIZMO > {line}", flush=True)
         except (OSError, urllib.error.URLError, RuntimeError, KeyError, ValueError) as error:
             if not self.stop_event.is_set():
                 self._send(client, BEGIN)
                 self._send(client, "OLLAMA NICHT ERREICHBAR.")
                 self._send(client, END)
+                print("GIZMO > OLLAMA NICHT ERREICHBAR.", flush=True)
                 print(f"Anfrage fehlgeschlagen: {error}")
 
     def handle(self, client):
@@ -187,6 +234,7 @@ class Bridge:
                         elif command.upper() == "STATUS":
                             self._send(client, f"FACTS: {len(self.facts)}")
                         else:
+                            print(f"C64 > {command}", flush=True)
                             self._answer(client, command)
                     elif len(buffer) < 256:
                         buffer.append(byte)
@@ -201,22 +249,40 @@ class Bridge:
             client.close()
 
     def serve(self):
-        self.server = socket.socket()
-        self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.server.bind((self.config["host"], self.config["port"]))
-        self.server.listen()
-        self.server.settimeout(0.5)
-        print(f"GIZMO-Bruecke auf Port {self.config['port']} bereit")
+        print("[.] GIZMO-64 // PC-UPLINK", flush=True)
         try:
+            self.start_ollama()
+            self.server = socket.socket()
+            self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.server.bind((self.config["host"], self.config["port"]))
+            self.server.listen()
+            self.server.settimeout(0.5)
+            print(f"[+] TCP-Port {self.config['port']} bereit", flush=True)
+            print("[i] ESC, Q, ENTER oder STRG+C beendet Bruecke und Ollama", flush=True)
+            if sys.platform == "win32":
+                threading.Thread(target=self._watch_keys, daemon=True).start()
             while not self.stop_event.is_set():
                 try:
                     client, address = self.server.accept()
                 except socket.timeout:
                     continue
-                print(f"C64 verbunden von {address[0]}:{address[1]}")
+                except OSError:
+                    if self.stop_event.is_set():
+                        break
+                    raise
+                print(f"[+] C64 verbunden von {address[0]}:{address[1]}", flush=True)
                 threading.Thread(target=self.handle, args=(client,), daemon=True).start()
         finally:
             self.stop()
+
+    def _watch_keys(self):
+        import msvcrt
+
+        while not self.stop_event.is_set():
+            key = msvcrt.getwch()
+            if key in ("\x1b", "q", "Q", "\r", "\n", "\x03"):
+                self.stop()
+                return
 
 
 if __name__ == "__main__":
@@ -227,3 +293,6 @@ if __name__ == "__main__":
         bridge.serve()
     except KeyboardInterrupt:
         bridge.stop()
+    except (OSError, RuntimeError) as error:
+        print(f"[!] Start fehlgeschlagen: {error}", flush=True)
+        raise SystemExit(1)
