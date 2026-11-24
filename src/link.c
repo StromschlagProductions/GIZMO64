@@ -218,7 +218,7 @@ void link_tick(void)
         ((tx_head + 1) & 63) != tx_tail) {
         send_cr();
         pending_active = 0;
-        response_deadline = now() + (unsigned int)120 * tick_rate;
+        response_deadline = now() + (unsigned int)150 * tick_rate;
     }
     while (rx_tail != rx_head && quota--) {
         c = rx[rx_tail];

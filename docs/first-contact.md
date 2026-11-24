@@ -21,7 +21,7 @@ ZWEITE ANTWORTZEILE
 
 Jede Zeile endet mit CRLF. Der Client verarbeitet fragmentierte Daten und zeigt nur den Inhalt zwischen den Markierungen als GIZMO-Antwort. Pro Antwort sind höchstens sechs Zeilen mit je höchstens 31 ASCII-Zeichen vorgesehen. Die Brücke entfernt `<think>`-Blöcke, wandelt Umlaute um und entfernt nicht druckbare Bytes. `STATUS` vom C64 liefert `FACTS: <anzahl>` für den Header. Der lokale C64-Befehl `STATUS` zeigt weiterhin die ACIA-Diagnose.
 
-Während einer Anfrage pulsiert die Wellenform schneller und eine dezente Anzeige erscheint in der Fußzeile. Nach 120 Sekunden ohne Antwortende meldet der C64 einen Antwort-Timeout, hält den Uplink aber offen. `OFFLINE` und `UPLINK` verwalten die Verbindung wie in 0.1.2. Bei Überlauf erscheinen ACIA- und Pufferwarnungen.
+Während einer Anfrage pulsiert die Wellenform schneller und eine dezente Anzeige erscheint in der Fußzeile. Nach 150 Sekunden ohne Antwortende meldet der C64 einen Antwort-Timeout, hält den Uplink aber offen. Das berücksichtigt den bedarfsweisen Ollama-Start und die bis zu 120 Sekunden API-Wartezeit. `OFFLINE` und `UPLINK` verwalten die Verbindung wie in 0.1.2. Bei Überlauf erscheinen ACIA- und Pufferwarnungen.
 
 ## Prüfstand
 

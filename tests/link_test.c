@@ -132,7 +132,7 @@ int main(void)
     assert(link_state == LINK_ONLINE);
     assert(link_send_text("NOCH EIN TEST"));
     { unsigned char i; for (i = 0; i < 20; ++i) link_tick(); }
-    link_test_advance(6001); link_tick();
+    link_test_advance(7501); link_tick();
     assert(!link_waiting);
     assert(link_state == LINK_ONLINE);
     return 0;
