@@ -3,7 +3,7 @@
 #include "ui.h"
 #include "link.h"
 
-static char input[39];
+static char input[121];
 static unsigned char input_length;
 static unsigned char offline_response;
 static const char *offline_messages[] = {
@@ -17,6 +17,7 @@ static void execute(void)
     ui_line("");
     if (strcmp(input, "HELP") == 0) {
         ui_line("HELP STATUS UPLINK PING OFFLINE");
+        ui_line("MERKE: TEXT / ERINNERE / FREITEXT");
         ui_line("DIAG HEX CLS IP [ADRESSE] F1:FARBE");
     } else if (strcmp(input, "STATUS") == 0) {
         ui_text("LINK: "); ui_line(link_state_name());
@@ -36,7 +37,9 @@ static void execute(void)
     else if (link_state == LINK_OFFLINE || link_state == LINK_ERROR) {
         ui_gizmo(offline_messages[offline_response]);
         offline_response = (offline_response + 1) % 3;
-    } else ui_line("UNBEKANNTER BEFEHL. HELP EINGEBEN.");
+    } else if (link_state == LINK_ONLINE) {
+        if (!link_send_text(input)) ui_system("GIZMO ANTWORTET NOCH");
+    } else ui_line("UPLINK NICHT BEREIT.");
     input_length = 0;
     input[0] = 0;
     ui_prompt(input);
@@ -62,7 +65,7 @@ static void keyboard(void)
     if (c >= 'a' && c <= 'z') c -= 32;
     if (c < 32 || c > 126) return;
 #endif
-    if (input_length >= 34) return;
+    if (input_length >= 120) return;
     input[input_length++] = c;
     input[input_length] = 0;
     ui_input_char(c);
@@ -71,7 +74,7 @@ static void keyboard(void)
 int main(void)
 {
     ui_init();
-    ui_system("BOOT / GIZMO-64 0.1.2");
+    ui_system("BOOT / GIZMO-64 0.2");
     ui_system("VIDEO + AUDIO / BEREIT");
     link_init();
     ui_system("ACIA $DE00 / PRUEFUNG");
@@ -81,7 +84,6 @@ int main(void)
     for (;;) {
         link_tick();
         keyboard();
-        ui_tick(link_state == LINK_DIAL || link_state == LINK_VERIFY ||
-                link_state == LINK_ONLINE);
+        ui_tick(link_state == LINK_DIAL || link_state == LINK_VERIFY || link_waiting);
     }
 }

@@ -6,6 +6,7 @@ void link_test_feed(const char *bytes);
 void link_test_advance(unsigned int ticks);
 unsigned char link_test_tx_length(void);
 unsigned char link_test_tx(unsigned char index);
+void link_test_tx_reset(void);
 unsigned char link_test_command(void);
 void link_test_status(unsigned char status);
 static char last_message[128];
@@ -14,6 +15,9 @@ void ui_line(const char *message)
     strcpy(last_message, message);
 }
 void ui_status_changed(void) { }
+void ui_waiting(unsigned char waiting) { (void)waiting; }
+void ui_memory_count(unsigned char count) { (void)count; }
+void ui_key_sound(void) { }
 void ui_system(const char *message) { ui_line(message); }
 void ui_gizmo(const char *message) { ui_line(message); }
 
@@ -102,5 +106,34 @@ int main(void)
     link_test_status(16);
     link_test_advance(601); link_tick();
     assert(strcmp(last_message, "TIMEOUT / ACIA OVERRUN") == 0);
+    link_test_advance(101); link_tick();
+    link_connect(); drain_dial();
+    link_test_feed("CONNECT 2400\r"); link_tick();
+    link_test_feed("PONG // GIZMO UPLINK AKTIV\r"); link_tick(); link_tick();
+    assert(link_state == LINK_ONLINE);
+    { unsigned char i; for (i = 0; i < 10; ++i) link_tick(); }
+    link_test_tx_reset();
+    {
+        char prompt[121];
+        unsigned char i;
+        for (i = 0; i < 120; ++i) prompt[i] = 'A';
+        prompt[120] = 0;
+        assert(link_send_text(prompt));
+        assert(link_waiting);
+        for (i = 0; i < 125; ++i) link_tick();
+        assert(link_test_tx_length() == 121);
+        assert(link_test_tx(120) == 13);
+    }
+    link_test_feed("[[GIZMO:BEGIN]]\rERSTE ZEILE\r");
+    link_tick(); link_tick(); link_tick();
+    link_test_feed("ZWEITE ZEILE\r[[GIZMO:END]]\r");
+    link_tick(); link_tick(); link_tick();
+    assert(!link_waiting);
+    assert(link_state == LINK_ONLINE);
+    assert(link_send_text("NOCH EIN TEST"));
+    { unsigned char i; for (i = 0; i < 20; ++i) link_tick(); }
+    link_test_advance(6001); link_tick();
+    assert(!link_waiting);
+    assert(link_state == LINK_ONLINE);
     return 0;
 }

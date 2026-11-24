@@ -1,4 +1,5 @@
 memory.json
+memory.tmp
 config.local.json
 .env
 __pycache__/

@@ -78,6 +78,15 @@ int main(void)
     ui_input_char('X');
     assert(ui_test_cell(0, 6) == 24);
     ui_clear();
+    ui_prompt("");
+    for (i = 0; i < 120; ++i) ui_input_char('A');
+    assert(ui_test_cell(6, 5) == 1);
+    assert(ui_test_cell(0, 6) == 1);
+    assert(ui_test_cell(5, 8) == 1);
+    for (i = 0; i < 120; ++i) ui_input_backspace();
+    assert(ui_test_cell(6, 5) == 32);
+    assert(ui_test_cell(0, 6) == 32);
+    ui_clear();
     for (i = 0; i < 25; ++i) ui_line("TEST");
     assert(ui_test_cell(2, 0) == (7 | 0x80));
     assert(ui_test_cell(0, 4) == 32);

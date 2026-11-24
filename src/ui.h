@@ -12,5 +12,7 @@ void ui_input_backspace(void);
 void ui_clear(void);
 void ui_theme(void);
 void ui_status_changed(void);
+void ui_waiting(unsigned char waiting);
+void ui_memory_count(unsigned char count);
 void ui_key_sound(void);
 #endif

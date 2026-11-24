@@ -23,6 +23,7 @@ test:
 	$(HOSTCC) -DGIZMO_TEST -DGIZMO_PETSCII_TEST -I src -Wall -Wextra -o build/charset_conversion_test tests/charset_conversion_test.c src/link.c
 	./build/charset_conversion_test
 	python3 tests/charset_test.py
+	python3 -m unittest discover -s tests -p 'test_bridge.py'
 
 HOSTCC ?= cc
 

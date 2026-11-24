@@ -1,5 +1,6 @@
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include "link.h"
 #include "ui.h"
 
@@ -22,6 +23,10 @@ unsigned char link_state = LINK_OFFLINE;
 unsigned char link_overruns;
 unsigned char link_drops;
 char link_host[16] = "192.168.178.244";
+unsigned char link_waiting;
+static unsigned char response_started, pending_active, pending_index;
+static char pending_text[121];
+static unsigned int response_deadline;
 
 static unsigned char rx[128];
 static unsigned char rx_head, rx_tail;
@@ -84,6 +89,8 @@ static void disconnect(unsigned char retry)
     tx_head = tx_tail;
     retry_pending = retry;
     link_state = LINK_HANGUP;
+    link_waiting = pending_active = response_started = 0;
+    ui_waiting(0);
     timeout(2);
 }
 
@@ -150,10 +157,28 @@ static void received_line(void)
     if (!line_length) return;
     if (link_state == LINK_OFFLINE || link_state == LINK_ERROR ||
         link_state == LINK_HANGUP) return;
-    ui_system(line);
+    if (strcmp(line, "[[GIZMO:BEGIN]]") == 0) {
+        response_started = 1;
+        ui_line("");
+        return;
+    }
+    if (strcmp(line, "[[GIZMO:END]]") == 0) {
+        response_started = link_waiting = 0;
+        ui_waiting(0);
+        ui_key_sound();
+        ui_line("");
+        return;
+    }
+    if (response_started) { ui_gizmo(line); return; }
+    if (strncmp(line, "FACTS: ", 7) == 0) {
+        ui_memory_count((unsigned char)atoi(line + 7));
+        return;
+    }
+    if (link_state != LINK_ONLINE) ui_system(line);
     if (strcmp(line, "PONG // GIZMO UPLINK AKTIV") == 0 && link_state == LINK_VERIFY) {
         link_state = LINK_ONLINE;
         ui_system("UPLINK VERIFIZIERT");
+        send("STATUS"); send_cr();
     } else if (strncmp(line, "CONNECT", 7) == 0) {
         saw_connect = 1;
         if (link_state == LINK_DIAL || link_state == LINK_HANDSHAKE) ping();
@@ -168,11 +193,33 @@ static void received_line(void)
     }
 }
 
+unsigned char link_send_text(const char *text)
+{
+    if (link_state != LINK_ONLINE || link_waiting || pending_active ||
+        strlen(text) > 120) return 0;
+    strcpy(pending_text, text);
+    pending_index = 0;
+    pending_active = link_waiting = 1;
+    ui_waiting(1);
+    return 1;
+}
+
 void link_tick(void)
 {
     unsigned char c;
     unsigned char quota = 16;
     link_poll();
+    while (pending_active && pending_text[pending_index] &&
+           ((tx_head + 1) & 63) != tx_tail) {
+        tx[tx_head] = text_to_wire(pending_text[pending_index++]);
+        tx_head = (tx_head + 1) & 63;
+    }
+    if (pending_active && !pending_text[pending_index] &&
+        ((tx_head + 1) & 63) != tx_tail) {
+        send_cr();
+        pending_active = 0;
+        response_deadline = now() + (unsigned int)120 * tick_rate;
+    }
     while (rx_tail != rx_head && quota--) {
         c = rx[rx_tail];
         rx_tail = (rx_tail + 1) & 127;
@@ -208,6 +255,11 @@ void link_tick(void)
         link_state = LINK_OFFLINE;
         if (retry_pending) link_connect();
         else ui_system("MODEM GETRENNT / OFFLINE");
+    }
+    if (link_waiting && !pending_active && (short)(now() - response_deadline) >= 0) {
+        link_waiting = response_started = 0;
+        ui_waiting(0);
+        ui_system("GIZMO / ANTWORT TIMEOUT");
     }
 }
 
@@ -246,6 +298,8 @@ void link_offline(void)
     if (available) disconnect(0);
     tx_head = tx_tail = rx_head = rx_tail = line_length = line_discard = 0;
     if (!available) link_state = LINK_OFFLINE;
+    link_waiting = pending_active = response_started = 0;
+    ui_waiting(0);
     ui_system("OFFLINE-MODUS AKTIV");
 }
 
@@ -328,6 +382,7 @@ unsigned char link_test_text_to_wire(unsigned char c) { return text_to_wire(c); 
 unsigned char link_test_wire_to_text(unsigned char c) { return wire_to_text(c); }
 unsigned char link_test_tx_length(void) { return test_tx_length; }
 unsigned char link_test_tx(unsigned char index) { return test_tx[index]; }
+void link_test_tx_reset(void) { test_tx_length = 0; }
 unsigned char link_test_command(void) { return COMMAND; }
 void link_test_status(unsigned char status) { test_status = status; }
 #endif

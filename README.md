@@ -1,6 +1,8 @@
 # GIZMO-64
 
-GIZMO-64 ist ein nativer C64-Ultimate-Client für eine vorhandene Python-TCP-Brücke zu Ollama. Version 0.1 bietet eine Terminaloberfläche, lokale Befehle und einen durch PING/PONG bestätigten PC-Uplink. Die Brücke selbst gehört nicht zu diesem Repository.
+GIZMO-64 ist ein nativer C64-Ultimate-Client mit einer lokalen Python-TCP-Brücke zu Ollama. Version 0.2 ermöglicht kurze Unterhaltungen über den durch PING/PONG bestätigten Uplink. Der hardwaregetestete Stand 0.1.2 ist als Git-Tag `v0.1.2` gesichert.
+
+Die [Anleitung für First Contact](docs/first-contact.md) erklärt Brücke, privates Gedächtnis, Antwortprotokoll und Windows-Start.
 
 ## Version 0.1.1 und Hardwarekorrektur
 
@@ -31,6 +33,8 @@ Das PRG mit `LOAD"GIZMO64.PRG",8,1` und `RUN` starten oder direkt über den Date
 | `IP` | Zieladresse anzeigen |
 | `IP 192.168.178.244` | Zieladresse ändern |
 | `F1` | Farbe umschalten |
+| `MERKE: ...` | Fakt über die Brücke lokal speichern |
+| `ERINNERE` | Gespeicherte Fakten abrufen |
 
 Die IP-Änderung gilt bis zum nächsten Programmstart. Die Oberfläche nutzt 40 × 25 Zeichen, feststehende Header- und Fußzeilen, zwei animierte Hardware-Sprites und ein kurzes SID-Tastenfeedback.
 
@@ -40,4 +44,4 @@ In den Ultimate-Einstellungen die ACIA/SwiftLink-Emulation auf `$DE00` und den M
 
 ## Aktuelle Grenzen
 
-Ein erster Hardwaretest bestätigte PRG-Start, F1 und SID. Die korrigierte Version 0.1.1 wurde in VICE visuell geprüft, wartet aber noch auf einen erneuten Test am echten Ultimate. Ohne emulierte ACIA bleibt sie in VICE offline und zeigt dies im Terminal an. Bei langen Datenströmen kann Polling Daten verlieren; ACIA-Overrun und volle Softwarepuffer werden sichtbar gemeldet. Die Firmwareeinstellungen und die Brücke müssen zusammen auf echter Hardware geprüft werden. Ollama-Gespräche und Langzeitgedächtnis sind noch nicht Teil dieser Version.
+Version 0.1.2 wurde auf dem echten Ultimate mit CONNECT, Begrüßung, PING und PONG erfolgreich geprüft. Version 0.2 wurde kompiliert, mit Hosttests geprüft und in VICE gestartet. Ein echter Hardwaretest der Unterhaltung steht aus. Ohne emulierte ACIA bleibt VICE offline. Bei langen Datenströmen kann Polling Daten verlieren; ACIA-Overrun und volle Softwarepuffer werden sichtbar gemeldet.

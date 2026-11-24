@@ -7,6 +7,9 @@ void ui_line(const char *text) { (void)text; }
 void ui_system(const char *text) { (void)text; }
 void ui_gizmo(const char *text) { (void)text; }
 void ui_status_changed(void) { }
+void ui_waiting(unsigned char waiting) { (void)waiting; }
+void ui_memory_count(unsigned char count) { (void)count; }
+void ui_key_sound(void) { }
 
 int main(void)
 {

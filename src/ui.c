@@ -34,6 +34,7 @@ static unsigned char sound_ticks;
 static unsigned char previous_raster;
 static unsigned char phase;
 static unsigned char shown_state = 255;
+static unsigned char editor_length, waiting, memory_count = 255;
 static const unsigned char wave[24] = {
     10,10,10,9,8,6,4,3,5,8,10,11,12,14,16,17,15,12,10,9,10,10,10,10
 };
@@ -65,6 +66,13 @@ static void header_status(void)
     x = 0;
     while (*label) cell(x++, 2, *label++);
     while (*name && x < 17) cell(x++, 2, *name++);
+    if (memory_count != 255) {
+        static const char digits[] = "0123456789";
+        name = "MEM / "; x = 22;
+        while (*name) cell(x++, 2, *name++);
+        cell(x++, 2, digits[(memory_count / 10) % 10]);
+        cell(x, 2, digits[memory_count % 10]);
+    }
     for (x = 0; x < 40; ++x) cell(x, 3, ' ');
     x = 0;
     name = "  ZIEL / ";
@@ -169,6 +177,7 @@ void ui_prompt(const char *input)
 {
     cursor_hide();
     if (col) newline();
+    editor_length = 0;
     ui_text("USR > ");
     ui_text(input);
 }
@@ -177,12 +186,24 @@ void ui_input_char(unsigned char c)
 {
     cursor_hide();
     put_char(c);
+    ++editor_length;
 }
 
 void ui_input_backspace(void)
 {
     cursor_hide();
-    if (col > 6) { --col; cell(col, row, ' '); }
+    if (!editor_length) return;
+    --editor_length;
+    if (col) --col;
+    else if (row > 5) { --row; col = 39; }
+    cell(col, row, ' ');
+}
+
+void ui_waiting(unsigned char value) { waiting = value; }
+void ui_memory_count(unsigned char count)
+{
+    memory_count = count;
+    shown_state = 255;
 }
 
 void ui_clear(void)
@@ -232,6 +253,8 @@ void ui_tick(unsigned char active)
     if (raster >= previous_raster) { previous_raster = raster; return; }
     previous_raster = raster;
     if (sound_ticks && !--sound_ticks) SID_VOICE = 0x10;
+    cell(37, 24, waiting ? '.' : ' ');
+    cell(38, 24, waiting && (pulse & 1) ? '.' : ' ');
     if (++pulse >= (active ? 5 : 16)) {
         pulse = 0;
         phase = (phase + 1) & 3;
@@ -260,7 +283,7 @@ void ui_init(void)
     REGISTER(0xd018) = 0x14;
     for (i = 0; i < 1000; ++i) { SCREEN[i] = 32; COLORS[i] = palettes[palette]; }
     row = 0;
-    ui_line("  GIZMO-64   /   UPLINK 01");
+    ui_line("  GIZMO-64   /   FIRST CONTACT");
     ui_line("  SYSTEMKERN  //  C64 ULTIMATE");
     ui_line("  LINK / INITIALISIERT");
     ui_line("  ZIEL / 192.168.178.244:6464");
@@ -285,7 +308,7 @@ void ui_init(void)
     for (i = 920; i < 1000; ++i) { SCREEN[i] = 32; COLORS[i] = 11; }
     row = 23;
     ui_line(" --------------------------------------");
-    ui_text(" F1 FARBE  HELP BEFEHLE  UPLINK 01");
+    ui_text(" F1 FARBE  HELP BEFEHLE  CONTACT 02");
     row = 5; col = 0;
     REGISTER(0xd418) = 15;
 }
