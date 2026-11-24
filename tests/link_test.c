@@ -6,6 +6,8 @@ void link_test_feed(const char *bytes);
 void link_test_advance(unsigned int ticks);
 unsigned char link_test_tx_length(void);
 unsigned char link_test_tx(unsigned char index);
+unsigned char link_test_command(void);
+void link_test_status(unsigned char status);
 static char last_message[128];
 void ui_line(const char *message)
 {
@@ -25,6 +27,7 @@ static void drain_dial(void)
 int main(void)
 {
     link_init();
+    assert(link_test_command() == 0x0b);
     assert(link_set_host("192.168.178.244"));
     assert(!link_set_host("256.1.1.1"));
     assert(!link_set_host("1.2.3"));
@@ -40,11 +43,15 @@ int main(void)
     link_tick(); link_tick(); link_tick();
     assert(link_state == LINK_ONLINE);
     link_offline();
+    assert(link_state == LINK_HANGUP);
+    assert(link_test_command() == 0x0a);
     link_test_feed("PONG // GIZMO UPLINK AKTIV\r");
     link_tick(); link_tick();
+    link_test_advance(101); link_tick();
     assert(link_state == LINK_OFFLINE);
     link_connect();
     drain_dial();
+    assert(link_test_command() == 0x0b);
     link_test_feed("CONNECT 2400\n");
     link_tick();
     assert(link_state == LINK_VERIFY);
@@ -55,6 +62,9 @@ int main(void)
     assert(link_state == LINK_VERIFY);
     link_test_advance(251);
     link_tick();
+    assert(link_state == LINK_HANGUP);
+    assert(strcmp(last_message, "TIMEOUT / PONG FEHLT") == 0);
+    link_test_advance(101); link_tick();
     assert(link_state == LINK_OFFLINE);
     link_connect();
     drain_dial();
@@ -62,9 +72,35 @@ int main(void)
     link_tick();
     assert(link_state == LINK_ERROR);
     link_connect();
+    assert(link_state == LINK_HANGUP);
+    link_test_advance(101); link_tick();
     drain_dial();
     link_test_advance(601);
     link_tick();
+    assert(strcmp(last_message, "TIMEOUT / KEINE RX-DATEN") == 0);
+    link_test_advance(101); link_tick();
     assert(link_state == LINK_OFFLINE);
+    link_connect();
+    drain_dial();
+    link_ping();
+    assert(link_state == LINK_VERIFY);
+    link_test_feed("PONG // GIZMO UPLINK AKTIV\r");
+    link_tick(); link_tick();
+    assert(link_state == LINK_ONLINE);
+    link_diagnostics();
+    link_hex_dump();
+    link_offline(); link_test_advance(101); link_tick();
+    link_connect(); drain_dial();
+    link_test_feed("UPLINK HERGESTELLT. GIZMO ONLINE.\r");
+    link_tick(); link_tick(); link_tick();
+    assert(link_state == LINK_VERIFY);
+    link_test_advance(251); link_tick();
+    assert(strcmp(last_message, "TIMEOUT / CONNECT FEHLT") == 0);
+    link_test_advance(101); link_tick();
+    link_connect(); drain_dial();
+    link_test_status(20); link_tick();
+    link_test_status(16);
+    link_test_advance(601); link_tick();
+    assert(strcmp(last_message, "TIMEOUT / ACIA OVERRUN") == 0);
     return 0;
 }

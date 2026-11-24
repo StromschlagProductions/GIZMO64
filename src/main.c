@@ -17,12 +17,15 @@ static void execute(void)
     ui_line("");
     if (strcmp(input, "HELP") == 0) {
         ui_line("HELP STATUS UPLINK PING OFFLINE");
-        ui_line("CLS IP [ADRESSE]  F1: FARBE");
+        ui_line("DIAG HEX CLS IP [ADRESSE] F1:FARBE");
     } else if (strcmp(input, "STATUS") == 0) {
         ui_text("LINK: "); ui_line(link_state_name());
         ui_text("ZIEL: "); ui_line(link_host);
+        link_diagnostics();
     } else if (strcmp(input, "UPLINK") == 0) link_connect();
     else if (strcmp(input, "PING") == 0) link_ping();
+    else if (strcmp(input, "DIAG") == 0) link_diagnostics();
+    else if (strcmp(input, "HEX") == 0) link_hex_dump();
     else if (strcmp(input, "OFFLINE") == 0) link_offline();
     else if (strcmp(input, "CLS") == 0) ui_clear();
     else if (strcmp(input, "IP") == 0) ui_line(link_host);
@@ -68,7 +71,7 @@ static void keyboard(void)
 int main(void)
 {
     ui_init();
-    ui_system("BOOT / GIZMO-64 0.1.1");
+    ui_system("BOOT / GIZMO-64 0.1.2");
     ui_system("VIDEO + AUDIO / BEREIT");
     link_init();
     ui_system("ACIA $DE00 / PRUEFUNG");

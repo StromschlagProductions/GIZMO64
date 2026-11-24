@@ -6,6 +6,8 @@ GIZMO-64 ist ein nativer C64-Ultimate-Client für eine vorhandene Python-TCP-Br�
 
 Die Oberfläche verwendet jetzt ausdrücklich die VIC-Bank 0, Bildschirm `$0400`, Zeichensatz `$1000` und den normalen Textmodus. Zwei Hardware-Sprites bilden eine zusammenhängende Wellenform. Header und Fußzeile bleiben beim Scrollen stehen. ASCII vom Netzwerk, cc65-PETSCII und Bildschirmcodes werden getrennt konvertiert. Die technischen Details und der [VICE-Screenshot](screenshots/vice-0.1.1.png) stehen in [docs/oberflaeche.md](docs/oberflaeche.md).
 
+Version 0.1.2 korrigiert die ACIA-Empfangskonfiguration und ergänzt die Uplink-Diagnose. Der Hardwaretest von 0.1.1 bestätigte eine TCP-Verbindung, aber noch keinen empfangenen Handshake. [docs/acia.md](docs/acia.md) beschreibt die Registerprüfung und die neuen Diagnosebefehle.
+
 ## Bauen
 
 Benötigt werden cc65 mit `cl65` im `PATH`, `make` und für die Hosttests ein C-Compiler. Im Repository `make`, danach liegt `GIZMO64.PRG` im Hauptverzeichnis. `make test` führt die Protokoll- und Oberflächentests auf dem Build-Rechner aus. `make clean` entfernt erzeugte Dateien. Die GitHub Action baut bei Push und Pull Request und stellt das PRG als Artefakt bereit.
@@ -22,6 +24,8 @@ Das PRG mit `LOAD"GIZMO64.PRG",8,1` und `RUN` starten oder direkt über den Date
 | `STATUS` | Linkstatus und Zieladresse anzeigen |
 | `UPLINK` | Verbindungsaufbau erneut starten |
 | `PING` | Verbindung erneut prüfen |
+| `DIAG` | RX-/TX-Zähler, ACIA-Status und Fehlerzähler anzeigen |
+| `HEX` | Letzte 16 empfangene Bytes als Hex anzeigen |
 | `OFFLINE` | Modem per DTR trennen |
 | `CLS` | Terminalbereich löschen |
 | `IP` | Zieladresse anzeigen |
