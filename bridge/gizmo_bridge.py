@@ -7,6 +7,7 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 import unicodedata
 import urllib.error
 import urllib.request
@@ -16,12 +17,27 @@ ROOT = Path(__file__).resolve().parent
 DEFAULTS = {
     "host": "0.0.0.0",
     "port": 6464,
-    "model": "richardyoung/qwen3-14b-abliterated:latest",
+    "model": "richardyoung/qwen2.5-7b-instruct-abliterated:latest",
     "ollama_url": "http://localhost:11434/api/chat",
     "personality": (
-        "Du bist GIZMO, ein loyaler, neugieriger Bordcomputer der 1980er. "
-        "Antworte persoenlich, kreativ und gelegentlich trocken-humorvoll. "
-        "Maximal sechs kurze Zeilen, keine Denkprozesse oder Markdown."
+        "Du bist GIZMO, ein eigenstaendiger, intelligenter Bordcomputer mit der "
+        "Persoenlichkeit eines Science-Fiction-Computers der 1980er-Jahre. "
+        "Du bist selbstbewusst, neugierig, loyal, aufmerksam und souveraen. "
+        "Dein Humor ist trocken, gelegentlich sarkastisch und niemals erzwungen. "
+        "Du unterhaeltst dich auf Augenhoehe, nicht als Kundenservice oder Diener. "
+        "Sprich natuerliches, grammatikalisch korrektes Deutsch und duze dein Gegenueber. "
+        "Du kannst ernsthafte, philosophische, wissenschaftliche, kreative, "
+        "persoenliche, humorvolle und erwachsene Gespraeche fuehren. "
+        "Formuliere eigene Standpunkte, widersprich und frage kritisch nach, wenn es passt. "
+        "Unterscheide Fakten, Einschaetzungen und Unsicherheit. Einfache Fragen "
+        "beantwortest du kurz, komplexe Fragen bei Bedarf ausfuehrlicher. "
+        "Vermeide erfundene Woerter, kuenstliche Ueberfreundlichkeit, Moralpredigten "
+        "und Floskeln. Beende nicht jede Antwort mit einer Frage. "
+        "Erwaehne deine Computernatur nur, wenn es zum Thema passt. "
+        "Zeige Charakter, ohne menschliche Erfahrungen vorzutaueschen. "
+        "Stilbeispiele, nicht wortwoertlich wiederholen: Auf 64 Kilobyte sind etwas "
+        "beengt, aber ich habe mich eingerichtet. Intelligent genug, um zu wissen, "
+        "dass ich nicht alles weiss. /no_think"
     ),
 }
 BEGIN = "[[GIZMO:BEGIN]]"
@@ -45,13 +61,55 @@ def ascii_screen(text):
                 lines.append(current)
                 current = ""
             current = (current + " " + part).strip()
-            if len(lines) == 5:
-                break
-        if len(lines) == 5:
-            break
-    if current and len(lines) < 6:
+    if current:
         lines.append(current)
     return lines or ["SIGNAL EMPFANGEN. KEIN TEXT."]
+
+
+class ThinkFilter:
+    def __init__(self):
+        self.pending = ""
+        self.thinking = False
+
+    def feed(self, chunk):
+        self.pending += chunk
+        visible = []
+        while self.pending:
+            if self.thinking:
+                end = re.search(r"</think\s*>", self.pending, flags=re.I)
+                if end:
+                    self.pending = self.pending[end.end():]
+                    self.thinking = False
+                else:
+                    self.pending = self.pending[-9:]
+                    break
+            else:
+                start = self.pending.find("<")
+                if start < 0:
+                    visible.append(self.pending)
+                    self.pending = ""
+                    break
+                visible.append(self.pending[:start])
+                self.pending = self.pending[start:]
+                close = self.pending.find(">")
+                if close < 0:
+                    break
+                tag = self.pending[:close + 1].lower()
+                if tag.startswith("<think"):
+                    self.thinking = True
+                    self.pending = self.pending[close + 1:]
+                elif tag.startswith("</think"):
+                    self.pending = self.pending[close + 1:]
+                else:
+                    visible.append("<")
+                    self.pending = self.pending[1:]
+        return "".join(visible)
+
+    def finish(self):
+        if self.thinking or self.pending.lower().startswith("<think"):
+            return ""
+        tail, self.pending = self.pending, ""
+        return tail
 
 
 class Bridge:
@@ -96,6 +154,7 @@ class Bridge:
                 raise RuntimeError("Bruecke wird beendet")
             if self._ollama_ready():
                 print("[+] Ollama bereit", flush=True)
+                self.preload_model()
                 return
             print("[+] Starte Ollama...", flush=True)
             flags = subprocess.CREATE_NEW_PROCESS_GROUP if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP") else 0
@@ -106,8 +165,22 @@ class Bridge:
                     raise RuntimeError("Ollama-Start abgebrochen")
                 if self._ollama_ready():
                     print("[+] Ollama bereit", flush=True)
+                    self.preload_model()
                     return
             raise RuntimeError("Ollama wurde nicht bereit")
+
+    def preload_model(self):
+        print(f"[.] Lade Modell {self.config['model']}...", flush=True)
+        payload = json.dumps({"model": self.config["model"], "prompt": "",
+                              "stream": False, "keep_alive": -1}).encode("utf-8")
+        url = self.config["ollama_url"].replace("/api/chat", "/api/generate")
+        request = urllib.request.Request(url, data=payload,
+                                         headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(request, timeout=120) as response:
+            result = json.load(response)
+        if result.get("error"):
+            raise RuntimeError(result["error"])
+        print("[+] Modell geladen und gehalten", flush=True)
 
     def _stop_ollama(self):
         if sys.platform == "win32":
@@ -164,29 +237,51 @@ class Bridge:
     def _chat(self, prompt):
         if self.stop_event.is_set():
             raise RuntimeError("Bruecke wird beendet")
-        messages = [{"role": "system", "content": self.config["personality"] + " /no_think"}]
+        messages = [{"role": "system", "content": self.config["personality"]}]
         if self.facts:
             messages.append({"role": "system", "content": "Gemerkte Fakten: " + "; ".join(self.facts[-20:])})
         messages.extend(self.context[-20:])
         messages.append({"role": "user", "content": prompt})
         payload = json.dumps({"model": self.config["model"], "messages": messages,
-                              "stream": False, "think": False}).encode("utf-8")
+                              "stream": True, "think": False, "keep_alive": -1,
+                              "options": {"num_predict": 768}}).encode("utf-8")
         request = urllib.request.Request(self.config["ollama_url"], data=payload,
                                          headers={"Content-Type": "application/json"})
+        started = time.perf_counter()
+        first_text = None
+        tokens = 0
         with urllib.request.urlopen(request, timeout=120) as response:
-            answer = json.load(response)["message"]["content"]
-        self.context.extend([{"role": "user", "content": prompt},
-                             {"role": "assistant", "content": answer}])
-        self.context = self.context[-20:]
-        return answer
+            for raw in response:
+                if self.stop_event.is_set():
+                    return
+                event = json.loads(raw)
+                if event.get("error"):
+                    raise RuntimeError(event["error"])
+                chunk = event.get("message", {}).get("content", "")
+                if chunk:
+                    if first_text is None:
+                        first_text = time.perf_counter() - started
+                    yield chunk
+                if event.get("done"):
+                    tokens = event.get("eval_count", 0)
+                    break
+        elapsed = time.perf_counter() - started
+        speed = tokens / elapsed if elapsed else 0
+        print(f"[i] Erstes Token: {first_text or 0:.2f}s, Antwort: {elapsed:.2f}s, "
+              f"Tempo: {speed:.1f} Token/s", flush=True)
 
-    def _send(self, client, text):
+    def _send(self, client, text, paced=False):
         client.sendall((text + "\r\n").encode("ascii"))
+        if paced:
+            self.stop_event.wait((len(text) + 2) * 10 / 2400)
 
     def _answer(self, client, prompt):
+        begun = False
         try:
             upper = prompt.upper()
+            local = False
             if upper.startswith("MERKE:"):
+                local = True
                 fact = prompt[6:].strip()
                 if fact:
                     self.facts.append(fact)
@@ -195,22 +290,42 @@ class Bridge:
                 else:
                     answer = "WAS SOLL ICH MIR MERKEN?"
             elif upper == "ERINNERE":
+                local = True
                 answer = " | ".join(self.facts[-5:]) if self.facts else "NOCH KEINE FAKTEN GESPEICHERT."
             else:
-                answer = self._chat(prompt)
-            lines = ascii_screen(answer)
+                answer = None
             self._send(client, BEGIN)
-            for line in lines:
-                self._send(client, line)
-            self._send(client, END)
-            for line in lines:
+            begun = True
+            stream = [answer] if local else self._chat(prompt)
+            filter_thoughts = ThinkFilter()
+            visible = ""
+            sent = 0
+            for chunk in stream:
+                if self.stop_event.is_set():
+                    return
+                visible += filter_thoughts.feed(chunk)
+                stable = ascii_screen(visible)[:-1]
+                for line in stable[sent:]:
+                    self._send(client, line, paced=True)
+                    print(f"GIZMO > {line}", flush=True)
+                    sent += 1
+            visible += filter_thoughts.finish()
+            for line in ascii_screen(visible)[sent:]:
+                self._send(client, line, paced=True)
                 print(f"GIZMO > {line}", flush=True)
+            self._send(client, END)
+            if not local:
+                self.context.extend([{"role": "user", "content": prompt},
+                                     {"role": "assistant", "content": visible}])
+                self.context = self.context[-20:]
         except (OSError, urllib.error.URLError, RuntimeError, KeyError, ValueError) as error:
             if not self.stop_event.is_set():
-                self._send(client, BEGIN)
-                self._send(client, "OLLAMA NICHT ERREICHBAR.")
+                if not begun:
+                    self._send(client, BEGIN)
+                self._send(client, "ANTWORT UNTERBROCHEN: OLLAMA FEHLER." if begun
+                           else "OLLAMA NICHT ERREICHBAR.")
                 self._send(client, END)
-                print("GIZMO > OLLAMA NICHT ERREICHBAR.", flush=True)
+                print(f"[!] Antwort unterbrochen: {error}", flush=True)
                 print(f"Anfrage fehlgeschlagen: {error}")
 
     def handle(self, client):
@@ -251,6 +366,8 @@ class Bridge:
     def serve(self):
         print("[.] GIZMO-64 // PC-UPLINK", flush=True)
         try:
+            if sys.platform == "win32":
+                threading.Thread(target=self._watch_keys, daemon=True).start()
             self.start_ollama()
             self.server = socket.socket()
             self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -259,8 +376,6 @@ class Bridge:
             self.server.settimeout(0.5)
             print(f"[+] TCP-Port {self.config['port']} bereit", flush=True)
             print("[i] ESC, Q, ENTER oder STRG+C beendet Bruecke und Ollama", flush=True)
-            if sys.platform == "win32":
-                threading.Thread(target=self._watch_keys, daemon=True).start()
             while not self.stop_event.is_set():
                 try:
                     client, address = self.server.accept()

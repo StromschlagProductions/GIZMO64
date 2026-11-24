@@ -12,11 +12,11 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y cc65
       - name: Test C client and Python bridge
         run: make test
-      - name: Build
-        run: make
-      - name: Upload PRG
+      - name: Build package
+        run: make package
+      - name: Upload complete package
         uses: actions/upload-artifact@v4
         with:
-          name: GIZMO64
-          path: GIZMO64.PRG
+          name: GIZMO64-v0.2.1
+          path: GIZMO64-v0.2.1.zip
           if-no-files-found: error

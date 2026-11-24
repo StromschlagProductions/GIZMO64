@@ -160,6 +160,7 @@ static void received_line(void)
     if (strcmp(line, "[[GIZMO:BEGIN]]") == 0) {
         response_started = 1;
         ui_line("");
+        ui_gizmo_start();
         return;
     }
     if (strcmp(line, "[[GIZMO:END]]") == 0) {
@@ -188,6 +189,11 @@ static void received_line(void)
     } else if (strncmp(line, "NO CARRIER", 10) == 0 ||
                strncmp(line, "BUSY", 4) == 0 ||
                strcmp(line, "ERROR") == 0) {
+        if (link_waiting) {
+            ui_system("GIZMO / ANTWORT UNTERBROCHEN");
+            link_waiting = pending_active = response_started = 0;
+            ui_waiting(0);
+        }
         link_state = LINK_ERROR;
         ui_system("MODEM: VERBINDUNG FEHLGESCHLAGEN");
     }
@@ -259,7 +265,7 @@ void link_tick(void)
     if (link_waiting && !pending_active && (short)(now() - response_deadline) >= 0) {
         link_waiting = response_started = 0;
         ui_waiting(0);
-        ui_system("GIZMO / ANTWORT TIMEOUT");
+        ui_system("GIZMO / ANTWORT UNVOLLSTAENDIG");
     }
 }
 

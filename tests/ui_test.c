@@ -19,12 +19,12 @@ int main(void)
     assert(ui_test_cell(0, 4) == 32);
     assert(ui_test_cell(3, 0) == (9 | 0x80));
     assert(ui_test_cell(1, 24) == 6);
-    assert(ui_test_register(0xd018) == 0x14);
-    assert(ui_test_register(0x07f8) == 0xe0);
+    assert(ui_test_register(0xd018) == 0x9c);
+    assert(ui_test_register(0x67f8) == 0xe0);
     assert(ui_test_register(0xd015) == 3);
     assert(ui_test_register(0xd010) == 3);
-    assert(ui_test_register(0x07f9) == 0xe1);
-    assert((ui_test_register(0xdd00) & 3) == 3);
+    assert(ui_test_register(0x67f9) == 0xe1);
+    assert((ui_test_register(0xdd00) & 3) == 2);
     assert((ui_test_register(0xdd02) & 3) == 3);
     assert((ui_test_register(0xd011) & 0x70) == 0x10);
     for (i = 0; i < 4; ++i) {
@@ -61,12 +61,18 @@ int main(void)
         ui_test_set_register(0xd012, 255); ui_tick(0);
         ui_test_set_register(0xd012, 0); ui_tick(0);
     }
-    assert(ui_test_register(0x07f8) == 0xe2);
-    assert(ui_test_register(0x07f9) == 0xe3);
+    assert(ui_test_register(0x67f8) == 0xe2);
+    assert(ui_test_register(0x67f9) == 0xe3);
     ui_clear();
     ui_text("\xc1\xc2\xc3");
     assert(ui_test_cell(0, 5) == 1);
     assert(ui_test_cell(1, 5) == 2);
+    ui_clear();
+    ui_text("?!,.:;\"'()-=/");
+    {
+        const unsigned char punctuation[] = "?!,.:;\"'()-=/";
+        for (i = 0; punctuation[i]; ++i) assert(ui_test_cell(i, 5) == punctuation[i]);
+    }
     ui_clear();
     ui_text("12345678901234567890123456789012345 ABCDE");
     assert(ui_test_cell(34, 5) == '5');

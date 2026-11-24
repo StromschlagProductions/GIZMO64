@@ -20,6 +20,7 @@ void ui_memory_count(unsigned char count) { (void)count; }
 void ui_key_sound(void) { }
 void ui_system(const char *message) { ui_line(message); }
 void ui_gizmo(const char *message) { ui_line(message); }
+void ui_gizmo_start(void) { }
 
 static void drain_dial(void)
 {

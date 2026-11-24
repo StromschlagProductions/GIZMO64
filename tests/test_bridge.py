@@ -6,14 +6,14 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bridge"))
-from gizmo_bridge import BEGIN, END, Bridge, ascii_screen
+from gizmo_bridge import BEGIN, END, Bridge, ThinkFilter, ascii_screen
 
 
 class BridgeTest(unittest.TestCase):
     def setUp(self):
         self.folder = tempfile.TemporaryDirectory()
         self.bridge = Bridge(self.folder.name)
-        self.bridge._chat = lambda prompt: "<think>geheim</think>Ärger? " + prompt * 6
+        self.bridge._chat = lambda prompt: iter(["<thi", "nk>geheim</think>Ärger? ", prompt * 20])
         self.client, server = socket.socketpair()
         self.client.settimeout(2)
         self.thread = threading.Thread(target=self.bridge.handle, args=(server,), daemon=True)
@@ -41,7 +41,7 @@ class BridgeTest(unittest.TestCase):
                 break
             lines.append(line)
         self.assertTrue(lines)
-        self.assertLessEqual(len(lines), 6)
+        self.assertGreater(len(lines), 6)
         self.assertTrue(all(len(line) <= 31 and line.isascii() for line in lines))
         self.assertNotIn(b"geheim", b" ".join(lines))
         self.assertIn(b"Aerger", b" ".join(lines))
@@ -58,11 +58,36 @@ class BridgeTest(unittest.TestCase):
 
     def test_long_answer_and_stop(self):
         lines = ascii_screen("Wort " * 300)
-        self.assertLessEqual(len(lines), 6)
+        self.assertGreater(len(lines), 6)
         self.assertTrue(all(len(line) <= 31 for line in lines))
         self.bridge.stop()
         self.thread.join(timeout=2)
         self.assertFalse(self.thread.is_alive())
+
+    def test_fragmented_think_tags_and_empty_tail(self):
+        thought = ThinkFilter()
+        self.assertEqual(thought.feed("Hallo <thi"), "Hallo ")
+        self.assertEqual(thought.feed("nk>privat</thi"), "")
+        self.assertEqual(thought.feed("nk>Welt"), "Welt")
+        self.assertEqual(thought.finish(), "")
+        thought = ThinkFilter()
+        self.assertEqual(thought.feed("Antwort <think>geheim"), "Antwort ")
+        self.assertEqual(thought.finish(), "")
+
+    def test_stream_failure_has_single_frame(self):
+        def broken(_prompt):
+            yield "Erster vollstaendiger Satz. Noch ein "
+            raise RuntimeError("Verbindung abgebrochen")
+        self.bridge._chat = broken
+        self.client.sendall(b"FRAGE\r")
+        lines = []
+        while True:
+            line = self.stream.readline().strip()
+            lines.append(line)
+            if line == END.encode():
+                break
+        self.assertEqual(lines.count(BEGIN.encode()), 1)
+        self.assertIn(b"ANTWORT UNTERBROCHEN", b" ".join(lines))
 
 
 if __name__ == "__main__":

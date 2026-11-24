@@ -14,13 +14,14 @@ static unsigned char test_registers[65536];
 #define SID_VOICE test_sid
 #define REGISTER(a) test_registers[a]
 #else
-#define SCREEN ((volatile unsigned char *)0x0400)
+#define SCREEN ((volatile unsigned char *)0x6400)
 #define COLORS ((volatile unsigned char *)0xd800)
 #define BORDER (*(volatile unsigned char *)0xd020)
 #define BACKGROUND (*(volatile unsigned char *)0xd021)
-#define SPRITES ((volatile unsigned char *)0x3800)
+#define SPRITES ((volatile unsigned char *)0x7800)
 #define SID_VOICE (*(volatile unsigned char *)0xd404)
 #define REGISTER(a) (*(volatile unsigned char *)(a))
+extern const unsigned char gizmo_font[2048];
 #endif
 
 static const unsigned char palettes[3] = {5, 3, 8};
@@ -35,6 +36,7 @@ static unsigned char previous_raster;
 static unsigned char phase;
 static unsigned char shown_state = 255;
 static unsigned char editor_length, waiting, memory_count = 255;
+static unsigned char gizmo_first = 1;
 static const unsigned char wave[24] = {
     10,10,10,9,8,6,4,3,5,8,10,11,12,14,16,17,15,12,10,9,10,10,10,10
 };
@@ -44,7 +46,7 @@ static unsigned char screen_code(unsigned char c)
     if (c >= 0xc1 && c <= 0xda) return c - 0xc0;
     if (c >= 0x61 && c <= 0x7a) c -= 32;
     if (c >= 0x41 && c <= 0x5a) return c - 64;
-    if (c >= 32 && c <= 63) return c;
+    if (c >= 32 && c <= 95) return c;
     return 63;
 }
 
@@ -169,9 +171,13 @@ void ui_system(const char *text)
 void ui_gizmo(const char *text)
 {
     if (col) newline();
-    ui_text("GZM > ");
+    if (gizmo_first) ui_text("GZM > ");
+    else ui_text("      ");
     ui_line(text);
+    gizmo_first = 0;
 }
+
+void ui_gizmo_start(void) { gizmo_first = 1; }
 
 void ui_prompt(const char *input)
 {
@@ -259,15 +265,15 @@ void ui_tick(unsigned char active)
         pulse = 0;
         phase = (phase + 1) & 3;
         frame = active ? phase : (phase == 3 ? 1 : phase);
-        REGISTER(0x07f8) = 0xe0 + frame * 2;
-        REGISTER(0x07f9) = 0xe1 + frame * 2;
+        REGISTER(0x67f8) = 0xe0 + frame * 2;
+        REGISTER(0x67f9) = 0xe1 + frame * 2;
     }
     if (shown_state != link_state) { shown_state = link_state; header_status(); }
     cursor_hide();
-    if (phase & 1) {
+    if (!waiting && (phase & 1)) {
         if (col >= 40) newline();
         cell(col, row, ' ');
-        SCREEN[(unsigned int)row * 40 + col] = 0xa0;
+        SCREEN[(unsigned int)row * 40 + col] = 96;
         cursor_on = 1;
     }
 }
@@ -276,18 +282,25 @@ void ui_init(void)
 {
     unsigned int i;
     REGISTER(0xdd02) |= 3;
-    REGISTER(0xdd00) = (REGISTER(0xdd00) & 0xfc) | 3;
+    REGISTER(0xdd00) = (REGISTER(0xdd00) & 0xfc) | 2;
     REGISTER(0xd011) = (REGISTER(0xd011) & 0x9f) | 0x10;
     REGISTER(0xd016) = (REGISTER(0xd016) & 0xef) | 8;
     BORDER = BACKGROUND = 0;
-    REGISTER(0xd018) = 0x14;
+    REGISTER(0xd018) = 0x9c;
+#ifndef GIZMO_TEST
+    for (i = 0; i < 2048; ++i) {
+        ((volatile unsigned char *)0x7000)[i] = gizmo_font[i];
+        if ((i & 7) == 0) link_poll();
+    }
+#endif
     for (i = 0; i < 1000; ++i) { SCREEN[i] = 32; COLORS[i] = palettes[palette]; }
     row = 0;
-    ui_line("  GIZMO-64   /   FIRST CONTACT");
+    ui_line("  GIZMO-64   /   TERMINAL 0.2.1");
     ui_line("  SYSTEMKERN  //  C64 ULTIMATE");
     ui_line("  LINK / INITIALISIERT");
     ui_line("  ZIEL / 192.168.178.244:6464");
     ui_line(" --------------------------------------");
+    for (i = 1; i < 39; ++i) SCREEN[160 + i] = 95;
     for (i = 2; i < 10; ++i) SCREEN[i] |= 0x80;
     row = 5; col = 0;
     make_sprites();
@@ -303,12 +316,13 @@ void ui_init(void)
     REGISTER(0xd017) &= 0xfc;
     REGISTER(0xd027) = accents[palette];
     REGISTER(0xd028) = accents[palette];
-    REGISTER(0x07f8) = 0xe0;
-    REGISTER(0x07f9) = 0xe1;
+    REGISTER(0x67f8) = 0xe0;
+    REGISTER(0x67f9) = 0xe1;
     for (i = 920; i < 1000; ++i) { SCREEN[i] = 32; COLORS[i] = 11; }
     row = 23;
     ui_line(" --------------------------------------");
-    ui_text(" F1 FARBE  HELP BEFEHLE  CONTACT 02");
+    for (i = 1; i < 39; ++i) SCREEN[920 + i] = 95;
+    ui_text(" F1 FARBE  HELP BEFEHLE  GIZMO 0.2.1");
     row = 5; col = 0;
     REGISTER(0xd418) = 15;
 }

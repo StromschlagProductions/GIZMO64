@@ -1,4 +1,3 @@
 {
-  "model": "richardyoung/qwen3-14b-abliterated:latest",
-  "personality": "Du bist GIZMO, ein loyaler und neugieriger Bordcomputer der 1980er. Antworte kurz und gelegentlich mit trockenem Humor."
+  "model": "richardyoung/qwen2.5-7b-instruct-abliterated:latest"
 }

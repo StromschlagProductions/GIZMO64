@@ -6,6 +6,7 @@
 static char input[121];
 static unsigned char input_length;
 static unsigned char offline_response;
+static unsigned char prompt_deferred;
 static const char *offline_messages[] = {
     "LOKALE SYSTEME AKTIV. UPLINK RUHT.",
     "SENSORKANAL BEREIT. KEIN FERNKONTAKT.",
@@ -35,14 +36,16 @@ static void execute(void)
         else ui_line("UNGUELTIGE IPV4-ADRESSE");
     } else if (!input[0]) { }
     else if (link_state == LINK_OFFLINE || link_state == LINK_ERROR) {
+        ui_gizmo_start();
         ui_gizmo(offline_messages[offline_response]);
         offline_response = (offline_response + 1) % 3;
     } else if (link_state == LINK_ONLINE) {
-        if (!link_send_text(input)) ui_system("GIZMO ANTWORTET NOCH");
+        if (link_send_text(input)) prompt_deferred = 1;
+        else ui_system("GIZMO ANTWORTET NOCH");
     } else ui_line("UPLINK NICHT BEREIT.");
     input_length = 0;
     input[0] = 0;
-    ui_prompt(input);
+    if (!prompt_deferred) ui_prompt(input);
 }
 
 static void keyboard(void)
@@ -74,7 +77,7 @@ static void keyboard(void)
 int main(void)
 {
     ui_init();
-    ui_system("BOOT / GIZMO-64 0.2");
+    ui_system("BOOT / GIZMO-64 0.2.1");
     ui_system("VIDEO + AUDIO / BEREIT");
     link_init();
     ui_system("ACIA $DE00 / PRUEFUNG");
@@ -83,6 +86,10 @@ int main(void)
     ui_prompt(input);
     for (;;) {
         link_tick();
+        if (prompt_deferred && !link_waiting) {
+            prompt_deferred = 0;
+            ui_prompt(input);
+        }
         keyboard();
         ui_tick(link_state == LINK_DIAL || link_state == LINK_VERIFY || link_waiting);
     }
