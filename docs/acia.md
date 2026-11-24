@@ -1,0 +1,11 @@
+# ACIA und Modem
+
+Die Implementierung nutzt die emulierte 6551-ACIA an `$DE00`. Die Register `$DE00` bis `$DE03` sind Daten, Status, Command und Control. Im Status bedeuten Bit 4 `TX Empty`, Bit 3 `RX Full` und Bit 2 `Overrun`. Diese Belegung ist im [Ultimate-FPGA-Quellcode](https://github.com/GideonZ/1541ultimate/blob/master/fpga/io/acia/vhdl_source/acia6551.vhd) sichtbar. Der [Modem-Quellcode](https://github.com/GideonZ/1541ultimate/blob/master/software/io/acia/modem.cc) ordnet Control-Index 8 einer Baudrate von 2400 zu und verarbeitet `ATD` sowie DTR-Abfall.
+
+Der Client setzt Control auf `$18`. Das bedeutet internen Takt, 8 Datenbits, einen Stoppbit und Index 8 mit 2400 Baud. Command `$03` hält DTR und RTS aktiv und deaktiviert Empfangsinterrupts. Der ursprünglich genannte Wert `$0B` würde RTS nach dem FPGA-Quellcode deaktivieren. `$1F` wählt nach dem Modem-Quellcode 38400 Baud. Beim Befehl `OFFLINE` setzt der Client Command auf `$02` und senkt DTR. Die Modemoption zum Trennen bei DTR-Abfall muss dafür aktiv sein.
+
+Empfang und Senden erfolgen ohne wartende Schleifen. `link_poll()` bedient die ACIA in der Hauptschleife und während Bildschirmausgaben sowie beim Scrollen. Ein 128-Byte-Ringpuffer nimmt empfangene Bytes auf, ein 64-Byte-Ringpuffer hält ausgehende Bytes. Überläufe werden im Terminal angezeigt. Zeilen sind auf 80 ASCII-Zeichen begrenzt. Steuerbytes außerhalb von CR und LF werden verworfen. CRLF zählt als ein Zeilenende. Die Ausgabe wandelt druckbares ASCII in C64-Bildschirmcodes um.
+
+Die Zustände sind Modem bereit, Wahl, Handshake, PING-Verifikation, Online, Offline und Fehler. Nach CONNECT oder der Serverbegrüßung sendet der Client `PING`. Erst das exakte PONG markiert den Link als online. Handshake und PING haben Zeitlimits von 12 und 5 Sekunden. Die Timeouts verwenden die C64-Jiffy-Uhr und den PAL/NTSC-Indikator `$02A6`.
+
+Polling bei 2400 Baud reduziert das Risiko verlorener Bytes, garantiert aber keinen verlustfreien Empfang. Insbesondere lange Bildschirmausgaben und Firmwarevarianten müssen auf dem echten Ultimate geprüft werden. Zu überprüfen sind ACIA-Mapping `$DE00`, Modem-Modus, DTR-Option, RTS-Verhalten, reale Übertragungsrate, Empfang bei langen Zeilen und die Reihenfolge von CONNECT und Begrüßung.
