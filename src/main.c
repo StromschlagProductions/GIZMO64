@@ -31,7 +31,7 @@ static void execute(void)
         else ui_line("UNGUELTIGE IPV4-ADRESSE");
     } else if (!input[0]) { }
     else if (link_state == LINK_OFFLINE || link_state == LINK_ERROR) {
-        ui_line(offline_messages[offline_response]);
+        ui_gizmo(offline_messages[offline_response]);
         offline_response = (offline_response + 1) % 3;
     } else ui_line("UNBEKANNTER BEFEHL. HELP EINGEBEN.");
     input_length = 0;
@@ -51,9 +51,15 @@ static void keyboard(void)
         if (input_length) { input[--input_length] = 0; ui_input_backspace(); }
         return;
     }
+#ifdef __CC65__
+    if (c >= 0x41 && c <= 0x5a) c += 128;
+    if (!((c >= 0xc1 && c <= 0xda) || (c >= 32 && c <= 64) ||
+          (c >= 91 && c <= 95))) return;
+#else
     if (c >= 'a' && c <= 'z') c -= 32;
-    if (c >= 0xc1 && c <= 0xda) c -= 128;
-    if (c < 32 || c > 126 || input_length >= 38) return;
+    if (c < 32 || c > 126) return;
+#endif
+    if (input_length >= 34) return;
     input[input_length++] = c;
     input[input_length] = 0;
     ui_input_char(c);
@@ -62,11 +68,11 @@ static void keyboard(void)
 int main(void)
 {
     ui_init();
-    ui_line("GIZMO-64 // UPLINK EDITION 0.1");
-    ui_line("SYSTEMKERN ONLINE");
+    ui_system("BOOT / GIZMO-64 0.1.1");
+    ui_system("VIDEO + AUDIO / BEREIT");
     link_init();
-    ui_line("MODEM INITIALISIERT");
-    ui_line("F1: FARBE  HELP: BEFEHLE");
+    ui_system("ACIA $DE00 / PRUEFUNG");
+    ui_system("NETZ / VERBINDUNG WIRD GEPRUEFT");
     link_connect();
     ui_prompt(input);
     for (;;) {

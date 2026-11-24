@@ -4,11 +4,16 @@
 
 void link_test_feed(const char *bytes);
 void link_test_advance(unsigned int ticks);
+unsigned char link_test_tx_length(void);
+unsigned char link_test_tx(unsigned char index);
 static char last_message[128];
 void ui_line(const char *message)
 {
     strcpy(last_message, message);
 }
+void ui_status_changed(void) { }
+void ui_system(const char *message) { ui_line(message); }
+void ui_gizmo(const char *message) { ui_line(message); }
 
 static void drain_dial(void)
 {
@@ -26,6 +31,8 @@ int main(void)
     assert(!link_set_host("1..2.3"));
     link_connect();
     drain_dial();
+    assert(link_test_tx_length() == strlen("ATDT 192.168.178.244:6464\r"));
+    assert(link_test_tx(link_test_tx_length() - 1) == 13);
     link_test_feed("UPLINK HERGESTELLT. GIZMO ONLINE.\r\nCON");
     link_tick(); link_tick(); link_tick();
     assert(link_state == LINK_VERIFY);

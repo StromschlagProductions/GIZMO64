@@ -2,11 +2,14 @@ CC65 ?= cl65
 CFLAGS = -t c64 -O -I src -Wl -m,build/GIZMO64.map
 SOURCES = src/main.c src/ui.c src/link.c
 
-all: GIZMO64.PRG
+all: GIZMO64.PRG verify-prg
 
 GIZMO64.PRG: $(SOURCES) src/ui.h src/link.h
 	mkdir -p build
 	$(CC65) $(CFLAGS) -o $@ $(SOURCES)
+
+verify-prg: GIZMO64.PRG
+	python3 tests/prg_test.py
 
 clean:
 	rm -rf build GIZMO64.PRG
@@ -17,7 +20,10 @@ test:
 	./build/link_test
 	$(HOSTCC) -DGIZMO_TEST -I src -Wall -Wextra -o build/ui_test tests/ui_test.c src/ui.c
 	./build/ui_test
+	$(HOSTCC) -DGIZMO_TEST -DGIZMO_PETSCII_TEST -I src -Wall -Wextra -o build/charset_conversion_test tests/charset_conversion_test.c src/link.c
+	./build/charset_conversion_test
+	python3 tests/charset_test.py
 
 HOSTCC ?= cc
 
-.PHONY: all clean test
+.PHONY: all clean test verify-prg

@@ -8,4 +8,6 @@ Empfang und Senden erfolgen ohne wartende Schleifen. `link_poll()` bedient die A
 
 Die Zustände sind Modem bereit, Wahl, Handshake, PING-Verifikation, Online, Offline und Fehler. Nach CONNECT oder der Serverbegrüßung sendet der Client `PING`. Erst das exakte PONG markiert den Link als online. Handshake und PING haben Zeitlimits von 12 und 5 Sekunden. Die Timeouts verwenden die C64-Jiffy-Uhr und den PAL/NTSC-Indikator `$02A6`.
 
+Beim Start liest der Client Command und Control nach dem Schreiben zurück. Ohne ACIA, etwa im normalen VICE ohne SwiftLink-Emulation, bleibt er offline. Die Modembefehle werden aus cc65-PETSCII ausdrücklich nach ASCII umgewandelt. Das Zeilenende wird als numerisches Byte `$0D` übertragen. Empfangsseitig werden `$0D`, `$0A` und deren Kombination erkannt. Diese Trennung ist erforderlich, weil cc65 auf dem C64 das C-Zeichenliteral `\r` als `$0A` kodiert.
+
 Polling bei 2400 Baud reduziert das Risiko verlorener Bytes, garantiert aber keinen verlustfreien Empfang. Insbesondere lange Bildschirmausgaben und Firmwarevarianten müssen auf dem echten Ultimate geprüft werden. Zu überprüfen sind ACIA-Mapping `$DE00`, Modem-Modus, DTR-Option, RTS-Verhalten, reale Übertragungsrate, Empfang bei langen Zeilen und die Reihenfolge von CONNECT und Begrüßung.

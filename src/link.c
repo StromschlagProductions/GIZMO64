@@ -5,6 +5,7 @@
 #ifdef GIZMO_TEST
 static unsigned char test_data, test_status = 16, test_command, test_control;
 static unsigned int test_time;
+static unsigned char test_tx[128], test_tx_length;
 #define DATA test_data
 #define STATUS test_status
 #define COMMAND test_command
@@ -31,6 +32,24 @@ static unsigned char line_discard;
 static unsigned char last_cr;
 static unsigned int deadline;
 static unsigned char tick_rate;
+static unsigned char available;
+
+static unsigned char wire_to_text(unsigned char c)
+{
+#if defined(__CC65__) || defined(GIZMO_PETSCII_TEST)
+    if (c >= 0x61 && c <= 0x7a) c -= 32;
+    if (c >= 0x41 && c <= 0x5a) return c + 128;
+#endif
+    return c;
+}
+
+static unsigned char text_to_wire(unsigned char c)
+{
+#if defined(__CC65__) || defined(GIZMO_PETSCII_TEST)
+    if (c >= 0xc1 && c <= 0xda) return c - 128;
+#endif
+    return c;
+}
 
 static unsigned int now(void)
 {
@@ -54,8 +73,10 @@ static unsigned char expired(void)
 
 void link_poll(void)
 {
-    unsigned char status = STATUS;
+    unsigned char status;
     unsigned char next;
+    if (!available) return;
+    status = STATUS;
     if (status & 4) link_overruns = 1;
     if (status & 8) {
         unsigned char c = DATA;
@@ -65,6 +86,9 @@ void link_poll(void)
     }
     if (tx_tail != tx_head && (STATUS & 16)) {
         DATA = tx[tx_tail];
+#ifdef GIZMO_TEST
+        if (test_tx_length < sizeof(test_tx)) test_tx[test_tx_length++] = DATA;
+#endif
         tx_tail = (tx_tail + 1) & 63;
     }
 }
@@ -75,17 +99,25 @@ static void send(const char *s)
     while (*s) {
         next = (tx_head + 1) & 63;
         if (next == tx_tail) { link_drops = 1; return; }
-        tx[tx_head] = *s++;
+        tx[tx_head] = text_to_wire(*s++);
         tx_head = next;
     }
 }
 
+static void send_cr(void)
+{
+    unsigned char next = (tx_head + 1) & 63;
+    if (next == tx_tail) { link_drops = 1; return; }
+    tx[tx_head] = 13;
+    tx_head = next;
+}
+
 static void ping(void)
 {
-    send("PING\r");
+    send("PING"); send_cr();
     link_state = LINK_VERIFY;
     timeout(5);
-    ui_line("PING AN PC-BRUECKE");
+    ui_system("PING AN PC-BRUECKE");
 }
 
 static void received_line(void)
@@ -95,18 +127,18 @@ static void received_line(void)
     if (link_state == LINK_OFFLINE || link_state == LINK_ERROR) return;
     if (strcmp(line, "PONG // GIZMO UPLINK AKTIV") == 0 && link_state == LINK_VERIFY) {
         link_state = LINK_ONLINE;
-        ui_line("UPLINK VERIFIZIERT");
+        ui_system("UPLINK VERIFIZIERT");
     } else if (strncmp(line, "CONNECT", 7) == 0 ||
                strcmp(line, "UPLINK HERGESTELLT. GIZMO ONLINE.") == 0) {
         if (link_state == LINK_DIAL || link_state == LINK_HANDSHAKE) ping();
-        ui_line(line);
+        ui_system(line);
     } else if (strncmp(line, "NO CARRIER", 10) == 0 ||
                strncmp(line, "BUSY", 4) == 0 ||
                strcmp(line, "ERROR") == 0) {
         link_state = LINK_ERROR;
-        ui_line("MODEM: VERBINDUNG FEHLGESCHLAGEN");
+        ui_system("MODEM: VERBINDUNG FEHLGESCHLAGEN");
     } else if (link_state == LINK_ONLINE) {
-        ui_line(line);
+        ui_gizmo(line);
     }
 }
 
@@ -118,30 +150,30 @@ void link_tick(void)
     while (rx_tail != rx_head && quota--) {
         c = rx[rx_tail];
         rx_tail = (rx_tail + 1) & 127;
-        if (c == '\r' || c == '\n') {
-            if (c == '\n' && last_cr) { last_cr = 0; continue; }
-            last_cr = (c == '\r');
+        if (c == 13 || c == 10) {
+            if (c == 10 && last_cr) { last_cr = 0; continue; }
+            last_cr = (c == 13);
             if (!line_discard) received_line();
             line_length = 0;
             line_discard = 0;
         } else {
             last_cr = 0;
             if (!line_discard && c >= 32 && c <= 126) {
-                if (line_length < 80) line[line_length++] = c;
+                if (line_length < 80) line[line_length++] = wire_to_text(c);
                 else { link_drops = 1; line_length = 0; line_discard = 1; }
             }
         }
         link_poll();
     }
-    if (link_overruns) { link_overruns = 0; ui_line("WARNUNG: ACIA OVERRUN"); }
-    if (link_drops) { link_drops = 0; ui_line("WARNUNG: PUFFERUEBERLAUF"); }
+    if (link_overruns) { link_overruns = 0; ui_system("WARNUNG: ACIA OVERRUN"); }
+    if (link_drops) { link_drops = 0; ui_system("WARNUNG: PUFFERUEBERLAUF"); }
     if (link_state == LINK_DIAL && tx_head == tx_tail) {
         link_state = LINK_HANDSHAKE;
         timeout(12);
     }
     if ((link_state == LINK_HANDSHAKE || link_state == LINK_VERIFY) && expired()) {
         link_state = LINK_OFFLINE;
-        ui_line("UPLINK TIMEOUT - OFFLINE");
+        ui_system("UPLINK TIMEOUT - OFFLINE");
     }
 }
 
@@ -155,32 +187,34 @@ void link_init(void)
 #endif
     CONTROL = 0x18;
     COMMAND = 0x03;
-    link_state = LINK_MODEM;
+    available = (CONTROL == 0x18 && COMMAND == 0x03);
+    link_state = available ? LINK_MODEM : LINK_OFFLINE;
 }
 
 void link_connect(void)
 {
+    if (!available) { ui_system("ACIA $DE00 NICHT VERFUEGBAR"); return; }
     if (link_state == LINK_DIAL || link_state == LINK_HANDSHAKE ||
         link_state == LINK_VERIFY || link_state == LINK_ONLINE) link_offline();
     rx_head = rx_tail = tx_head = tx_tail = line_length = line_discard = 0;
     COMMAND = 0x03;
-    send("ATDT "); send(link_host); send(":6464\r");
+    send("ATDT "); send(link_host); send(":6464"); send_cr();
     link_state = LINK_DIAL;
-    ui_line("WAHLE PC-UPLINK...");
+    ui_system("WAHLE PC-UPLINK...");
 }
 
 void link_offline(void)
 {
-    COMMAND = 0x02;
+    if (available) COMMAND = 0x02;
     tx_head = tx_tail = rx_head = rx_tail = line_length = line_discard = 0;
     link_state = LINK_OFFLINE;
-    ui_line("OFFLINE-MODUS AKTIV");
+    ui_system("OFFLINE-MODUS AKTIV");
 }
 
 void link_ping(void)
 {
     if (link_state == LINK_ONLINE) ping();
-    else ui_line("KEIN VERIFIZIERTER UPLINK");
+    else ui_system("KEIN VERIFIZIERTER UPLINK");
 }
 
 unsigned char link_set_host(const char *host)
@@ -201,6 +235,7 @@ unsigned char link_set_host(const char *host)
     }
     if (dots != 3 || !digits || octet > 255 || p - host > 15) return 0;
     strcpy(link_host, host);
+    ui_status_changed();
     return 1;
 }
 
@@ -222,4 +257,8 @@ void link_test_feed(const char *bytes)
     }
 }
 void link_test_advance(unsigned int ticks) { test_time += ticks; }
+unsigned char link_test_text_to_wire(unsigned char c) { return text_to_wire(c); }
+unsigned char link_test_wire_to_text(unsigned char c) { return wire_to_text(c); }
+unsigned char link_test_tx_length(void) { return test_tx_length; }
+unsigned char link_test_tx(unsigned char index) { return test_tx[index]; }
 #endif
