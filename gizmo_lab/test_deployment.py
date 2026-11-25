@@ -4,15 +4,29 @@ from pathlib import Path
 import shutil
 import tempfile
 import unittest
+import subprocess
+import sys
 from unittest.mock import patch
 
 import deployment as deploy
+from version import VERSION
 
 SOURCE=Path(__file__).resolve().parent
 GIT=shutil.which('git') or str(SOURCE.parent/'.local-tools/git/cmd/git.exe')
 
 
 class DeploymentTest(unittest.TestCase):
+    def test_runtime_imports_with_the_fixed_v031_update_manifest(self):
+        legacy_files=('gizmo_lab.py','memory.py','analysis.py','version.py','deployment.py',
+            'config.example.json','personality.example.txt','questions.json','variants.example.json',
+            'README.md','LOCAL-DEVELOPMENT.md','MEMORY.md','ARCHITEKTUR-0.3.md')
+        with tempfile.TemporaryDirectory() as temporary:
+            staging=Path(temporary)
+            for name in legacy_files:
+                shutil.copyfile(SOURCE/name,staging/name)
+            code='import sys;sys.path.insert(0,sys.argv[1]);import gizmo_lab,memory,analysis;assert gizmo_lab.VERSION==sys.argv[2]'
+            subprocess.run([sys.executable,'-c',code,str(staging),VERSION],check=True,capture_output=True,timeout=15)
+
     def source(self,base,version='0.3.1'):
         source=base/'source'
         source.mkdir()
@@ -99,12 +113,12 @@ class DeploymentTest(unittest.TestCase):
             shutil.copytree(SOURCE,repository/'gizmo_lab',ignore=shutil.ignore_patterns('__pycache__','*.pyc'))
             deploy.git_run(GIT,'-C',repository,'add','gizmo_lab')
             deploy.git_run(GIT,'-C',repository,'commit','-m','Synthetic release fixture')
-            deploy.git_run(GIT,'-C',repository,'tag','lab-v0.3.1')
+            deploy.git_run(GIT,'-C',repository,'tag','lab-v'+VERSION)
             deploy.git_run(GIT,'-C',repository,'tag','lab-v99.0.0-beta')
             with patch.object(deploy,'REPOSITORY',str(repository)):
                 self.assertTrue(deploy.update(root))
                 self.assertFalse(deploy.update(root))
             release,pointer=deploy.current_release(root)
-            self.assertEqual(pointer['version'],'0.3.1')
+            self.assertEqual(pointer['version'],VERSION)
             self.assertEqual(len(list((root/'releases').iterdir())),2)
             self.assertEqual(set(p.name for p in release.iterdir()),set(deploy.FILES))

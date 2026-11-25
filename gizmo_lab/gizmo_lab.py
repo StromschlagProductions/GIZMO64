@@ -12,7 +12,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime
 from pathlib import Path
-from memory import Memory, utc_now
+from memory import Memory, utc_now, assemble_context, ContextBudgetError
 from analysis import Analyzer
 from version import VERSION
 
@@ -32,7 +32,9 @@ def private_dir():
 
 def load_config(data):
     source = data / 'config.json'
-    config = json.loads(source.read_text(encoding='utf-8')) if source.exists() else json.loads((ROOT / 'config.example.json').read_text(encoding='utf-8'))
+    config = json.loads((ROOT / 'config.example.json').read_text(encoding='utf-8'))
+    if source.exists():
+        config.update(json.loads(source.read_text(encoding='utf-8')))
     return config
 
 
@@ -154,24 +156,23 @@ class Lab:
         if self.analyzer:
             self.analyzer.pause()
         model = model or self.model or self.config.get('model', DEFAULT_MODEL)
-        messages = [{'role': 'system', 'content': self.personality}]
-        retrieved = []
-        retrieval_s = 0
-        if context is None:
-            retrieved,retrieval_s = self.memory.retrieve(prompt, self.config.get('memory_token_budget', 300))
-            elapsed_since_previous = (datetime.fromisoformat(utc_now()) - datetime.fromisoformat(self.previous_message_at)).total_seconds() if self.previous_message_at else None
-            clock = f"Aktuelle UTC-Zeit: {utc_now()}. Sitzungsbeginn: {self.session_started}. Letzte Nachricht vor Sitzungsbeginn: {self.previous_message_at or 'keine'}. Vergangene Sekunden seitdem: {elapsed_since_previous if elapsed_since_previous is not None else 'unbekannt'}. Behaupte keine Aktivitaeten waehrend ausgeschalteter Sitzungen."
-            messages.append({'role':'system','content':clock})
-            if retrieved:
-                messages.append({'role':'system','content':'Bestaetigte lokale Erinnerungen (mit Herkunft; Fiktion nicht als Realitaet behandeln):\n'+'\n'.join(retrieved)})
-            messages += self.memory.recent(self.conversation_id, self.config.get('working_messages', 20))
-        else:
-            messages += list(context)[-self.config.get('working_messages', 20):]
-        messages.append({'role': 'user', 'content': prompt})
+        elapsed_since_previous = (datetime.fromisoformat(utc_now()) - datetime.fromisoformat(self.previous_message_at)).total_seconds() if self.previous_message_at else None
+        clock = f"Aktuelle UTC-Zeit: {utc_now()}. Sitzungsbeginn: {self.session_started}. Letzte Nachricht vor Sitzungsbeginn: {self.previous_message_at or 'keine'}. Vergangene Sekunden seitdem: {elapsed_since_previous if elapsed_since_previous is not None else 'unbekannt'}. Behaupte keine Aktivitaeten waehrend ausgeschalteter Sitzungen."
+        try:
+            history=self.memory.dialog_history(self.conversation_id) if context is None else list(context)
+            retrieve=self.memory.retrieve if context is None else lambda *_:([],0)
+            messages,retrieved,budget=assemble_context(self.personality,clock,prompt,history,retrieve,self.config)
+        except Exception:
+            if self.analyzer: self.analyzer.resume()
+            raise
+        retrieval_s=budget['retrieval_s']
         self.last_diagnostics = {'messages':messages,'retrieved':retrieved,'retrieval_s':retrieval_s,
-                                 'context_chars':sum(len(message['content']) for message in messages)}
+                                 'context_chars':sum(len(message['content']) for message in messages),'budget':budget,
+                                 'memory_selection':getattr(self.memory,'last_retrieval',{})}
         source_id = self.memory.add_message(self.conversation_id,'user',prompt) if context is None else None
         options = {key: self.config[key] for key in OPTIONS if self.config.get(key) is not None}
+        options.setdefault('num_ctx',8192)
+        options.setdefault('num_predict',768)
         payload = {'model': model, 'messages': messages, 'stream': True,
                    'keep_alive': self.config.get('keep_alive', -1), 'options': options,
                    'think': self.config.get('think', False)}
@@ -392,6 +393,8 @@ def main():
         print(f'[.] GIZMO LAB {VERSION} // LOKALES TERMINAL', flush=True)
         if lab.memory.retried_jobs:
             print(f'[i] {lab.memory.retried_jobs} fehlgeschlagene Altanalysen erneut eingereiht.',flush=True)
+        if lab.memory.reindexed_jobs:
+            print(f'[i] {lab.memory.reindexed_jobs} Archivnachrichten zur aktualisierten Analyse eingereiht.',flush=True)
         interruptible(lab.start)
         if args.benchmark:
             questions = json.loads((ROOT / 'questions.json').read_text(encoding='utf-8'))
@@ -429,7 +432,7 @@ def main():
                     lab.memory.set_relation_status(int(prompt[17:]),'deleted')
                     continue
                 if prompt.strip() == '/reanalyze':
-                    print('[i] Archiv eingereiht:',lab.memory.enqueue_archive())
+                    print('[i] Archiv eingereiht:',lab.memory.enqueue_archive(reanalyze=True))
                     continue
                 if prompt.strip() == '/retry-analysis':
                     print('[i] Fehlgeschlagene Analysen erneut eingereiht:',lab.memory.retry_failed())
@@ -455,7 +458,11 @@ def main():
                 if not prompt.strip():
                     continue
                 print('GIZMO > ', end='', flush=True)
-                result = interruptible(lambda: lab.chat(prompt, on_text=lambda chunk: print(chunk, end='', flush=True)))
+                try:
+                    result = interruptible(lambda: lab.chat(prompt, on_text=lambda chunk: print(chunk, end='', flush=True)))
+                except ContextBudgetError as error:
+                    print(f'\n[!] {error}',flush=True)
+                    continue
                 print(f"\n[i] {result['total_s']:.2f} s, {result['tokens_per_s']:.1f} Token/s, {result['abort_reason']}")
                 if args.debug:
                     print(json.dumps(lab.last_diagnostics,ensure_ascii=False,indent=2))

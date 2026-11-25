@@ -1,4 +1,4 @@
-# LAB 0.3.1 – lokaler Entwicklungs- und Produktivbetrieb
+# LAB 0.3.2 – lokaler Entwicklungs- und Produktivbetrieb
 
 PC-seitige Entwicklung und reale Modelltests erfolgen lokal unter Windows. Der C64-Client und die produktive Brücke gehören nicht zu diesem Update.
 
@@ -18,9 +18,9 @@ Der Installer liest **keine** privaten Daten. Standard bleibt der vorhandene Win
 
 ## Sicherung und Altaufträge
 
-Beim ersten Öffnen einer bestehenden Datenbank mit einer neuen LAB-/Schemaversion legt LAB **vor Änderungen** eine konsistente SQLite-Sicherung mit Mikrosekunden-Zeitstempel im selben privaten Verzeichnis an (`memory.sqlite3.pre-v0.3.1-...bak`). Die Sicherung umfasst auch committed WAL-Daten; `integrity_check` muss erfolgreich sein. Bei einem Fehler wird der Start abgebrochen. Normale Gesprächseinträge benötigen keine vollständige Sicherung vor jeder einzelnen Nachricht. Sicherungen werden nicht automatisch gelöscht oder übertragen.
+Beim ersten Öffnen einer bestehenden Datenbank mit einer neuen LAB-/Schemaversion legt LAB **vor Änderungen** eine konsistente SQLite-Sicherung mit Mikrosekunden-Zeitstempel im selben privaten Verzeichnis an (`memory.sqlite3.pre-v0.3.2-...bak`). Die Sicherung umfasst auch committed WAL-Daten; `integrity_check` muss erfolgreich sein. Bei einem Fehler wird der Start abgebrochen. Normale Gesprächseinträge benötigen keine vollständige Sicherung vor jeder einzelnen Nachricht. Sicherungen werden nicht automatisch gelöscht oder übertragen.
 
-LAB 0.3.1 verwendet Schema 4 für Versions- und Migrationsmetadaten. Beim Upgrade werden bisher fehlgeschlagene Analyseaufträge genau einmal erneut auf `pending` gesetzt; erledigte Aufträge, Rohgespräche und manuelle Korrekturen bleiben erhalten. Die Marker und Auftragsänderungen werden gemeinsam committet. Der Analyzer verarbeitet die Warteschlange nach dem Start. Weitere Fehler bleiben sichtbar und lassen sich mit dem vorhandenen `/retry-analysis` erneut einreihen. `/reanalyze` und Löschschutz bleiben erhalten. Ein älterer Code darf eine neuere Schemaversion nicht öffnen.
+LAB 0.3.2 verwendet Schema 5 mit Such-, Quellen- und Normalisierungsmetadaten. Beim Upgrade wird das Benutzerarchiv einmal für die verbesserte Analyse eingereiht. Rohgespräche und manuelle Entscheidungen bleiben erhalten. Marker und Auftragsänderungen werden gemeinsam committet. Der Analyzer verarbeitet die Warteschlange nach dem Start. `/retry-analysis` wiederholt Fehler, `/reanalyze` auch bereits erledigte Aufträge. Ein älterer Code darf eine neuere Schemaversion nicht öffnen.
 
 ## Lokale Qualitätssicherung
 
@@ -45,3 +45,11 @@ Die existierende Cloud-C64-Pipeline wird durch reine LAB-Veröffentlichungen nic
 ## Fehlerkorrekturen 0.3.1
 
 Die reale Gemma-Analyse verbrauchte ohne `think:false` das 350-Token-Limit für Thinking und lieferte leeren JSON-Inhalt. Der Extraktionsauftrag deaktiviert Thinking jetzt ausdrücklich. JSON-Schema und Prompt enthalten das tatsächlich erlaubte Vokabular; ungültige Beziehungstypen werden vermieden. Abgeschnittene Antworten erhalten eine klare Fehlermeldung. Deutsche Unsicherheits-, Fiktions- und Pronomenmarker werden konservativ behandelt. SQLite-Backupverbindungen und Testinstanzen werden unter Windows korrekt geschlossen. Keine neuen Memory-Core-Funktionen.
+
+## Active-Memory-Abnahme 0.3.2
+
+Die neue Laufzeit passt in den festen Programmdatei-Katalog des 0.3.1-Updaters. Kein manuelles Bootstrap-Update ist nötig; ein Regressionstest importiert die Laufzeit ausschließlich aus diesem alten Dateikatalog.
+
+active_memory_qa.py prüft in getrennten Prozessen 30 Gesprächsrunden, tatsächliche englische Antworten, Neustart mit leerem Dialog, einen bereits installierten Modellwechsel und ein synthetisches Altarchiv. qa_personality.en.txt ist ein öffentliches englisches QA-Profil im Stil der neutralen GIZMO-Persönlichkeit, keine Kopie eines privaten Profils. Die bisherigen deutschen Tests und eine deutsche Gedächtnisfrage mit leerem Dialog bleiben erhalten. Faktenprüfungen akzeptieren inhaltlich richtige Übersetzungen. Konkrete Charaktertests schließen Standardfloskeln, unangebrachte Gedächtnisaufzählungen, unnötige Rückfragen und erfundene Offline-Aktivität aus. Antworten und Profilprüfsummen bleiben lokal nachvollziehbar.
+
+Wichtige Einstellungen: num_ctx (8192), num_predict (768), memory_token_budget (900), history_token_budget (null = adaptiv). Vorhandene private Werte bleiben erhalten; fehlende Schlüssel erhalten Laufzeit-Standardwerte. Konfigurationsdateien werden nicht umgeschrieben. working_messages ist keine starre Obergrenze mehr. Das UTF-8-Budget ist konservativ und reserviert zusätzlich Antwort-/Template-Platz. Tatsächliche Ollama-Tokenzahlen werden in der QA protokolliert. Grenzen und Abrufverhalten sind in README.md beschrieben.

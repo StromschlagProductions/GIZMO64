@@ -1,38 +1,36 @@
-# GIZMO LAB 0.3.1
+# GIZMO LAB 0.3.2 – Active Memory
 
-Der reparierte Windows-Stand mit real geprüfter Gemma-Extraktion, automatischer Sicherung vor Versionsmigrationen und erneut verarbeitbaren Altaufträgen. [Lokaler Start, Updates und Qualitätssicherung](LOCAL-DEVELOPMENT.md). Für den Alltag dient nach einmaliger Installation `GIZMO.cmd`; ZIP-Dateien müssen nicht mehr manuell ersetzt werden.
+Lokale Windows-Dialogumgebung mit Ollama und SQLite/FTS5. Bestätigte persönliche Informationen und zusammengehörige Personen-/Haustierbeziehungen werden aktiv abgerufen. C64-Client und produktive Brücke bleiben unverändert. Keine Cloud-Modellaufrufe, zusätzlichen Modelle, Dienste oder Autostarts.
 
-Lokale Windows-Terminalumgebung für Modell- und Persönlichkeitstests. Der C64-Client und die produktive Brücke werden nicht verwendet oder verändert. Die neutrale Persönlichkeit in `personality.example.txt` entspricht dem 0.2.1-Prompt.
+## Alltag und Updates
 
-## Start
+Die bestehende Installation mit `GIZMO.cmd` starten. Veröffentlichte LAB-Tags werden automatisch geprüft; offline startet die vorhandene Version. `GIZMO-Update.cmd` aktualisiert ausschließlich Programmdateien, ohne private Dateien zu öffnen. `/quit` und Strg+C beenden LAB und sämtliche Ollama-Prozesse. Kein manuelles ZIP-Entpacken oder BAT-Bearbeiten. [Installation, Sicherungen und lokale QA](LOCAL-DEVELOPMENT.md).
 
-Python 3 und Ollama installieren. Das bevorzugte Modell **vorher manuell** mit `ollama pull gemma4:12b` laden. `start-gizmo-lab.bat` ausführen. LAB startet Ollama und lädt das Modell vor. Freie deutsche Texte werden gestreamt. `/model NAME` wechselt das Modell. `/quit` und Strg+C beenden LAB. ESC und Q brechen während Modellladen, Generierung oder Benchmark ab. Während normaler Texteingabe ist `Q` ein gewöhnliches Zeichen; ESC beendet die Eingabe.
+Profil, config.json und memory.sqlite3 bleiben am bisherigen Datenort (standardmäßig LOCALAPPDATA/GizmoLab). Das öffentliche personality.example.txt dient nur als Fallback. Das englische Testprofil ändert keine produktive Persönlichkeit. Vorhandene Konfigurationswerte bleiben erhalten; fehlende Schlüssel erhalten Laufzeit-Standardwerte.
 
-Mit `--personality C:\Pfad\profil.txt` kann ein externes UTF-8-Profil für einen gesamten Testlauf gewählt werden. Der Benchmark protokolliert dessen SHA-256-Prüfsumme, sodass alle Modellvarianten nachweisbar dasselbe Profil verwenden. Das private Profil `GIZMO_Awakening_V2_EN.txt` kann in `%LOCALAPPDATA%\GizmoLab` liegen oder mit `--personality C:\Pfad\GIZMO_Awakening_V2_EN.txt` gewählt werden. Es wird nicht mitgeliefert. Ohne private Datei dient das neutrale Beispielprofil als Fallback. Persönliche Dateien liegen unter `%LOCALAPPDATA%\GizmoLab` (oder `GIZMO_LAB_DATA`). `config.example.json` dort als `config.json` und `personality.example.txt` als `personality.txt` kopieren. Nur diese lokalen Kopien bearbeiten. Berichte landen unter `reports`; sie werden nicht im öffentlichen Repository abgelegt. `keep_alive: -1` hält ein Modell geladen; beim Modellwechsel wird das alte Modell mit `keep_alive: 0` freigegeben. Keine Modelle werden automatisch heruntergeladen.
+## Active Memory
 
-## Benchmark
+Eine Frage nach dem Studienfach der Schwester ruft sowohl die Schwesterbeziehung als auch das zugehörige Studienfach ab. Namen und persönliche Anker sind priorisiert. Lokale FTS5-Suche, lexikalische Hilfen für Englisch/Deutsch und bis zu zwei Graphschritte verbinden passende Angaben. Kein zusätzlicher Modellaufruf vor einer Antwort, kein Embedding-Modell. Die Graphstruktur und normalisierten Behauptungsschlüssel sind unabhängig von der Dialogsprache.
 
-`start-gizmo-lab.bat --benchmark` nutzt `questions.json`. Für einen Vergleich das mitgelieferte Referenzmodell über `--variants variants.example.json` prüfen. Für andere Varianten eine eigene JSON-Datei über `--variants C:\Pfad\variants.json` angeben. Format: `[{"model":"modell-a","start":"cold","options":{"temperature":0.5}},{"model":"modell-b","start":"warm","options":{"temperature":0.8}}]`. JSON und Markdown enthalten Modell, Parameter, Zeiten, Tokenwerte, Ollama-Tempo, Abbruchgrund und vollständige Antwort. `start: cold` entlädt das Modell unmittelbar vor der ersten Testfrage. `start: warm` lädt es vor der Frage; die Vorladezeit wird getrennt als `preload_s` erfasst. Nachfolgende Fragen derselben Variante sind Warmstarts. Der Bericht enthält außerdem `load_duration` aus Ollamas Metriken. Kreativität wird nicht durch erfundene Punktwerte bewertet.
+Nur aktive, belegte Beziehungen werden als Fakten eingeblendet. Unsichere, widersprüchliche und fiktionale Angaben bleiben unbestätigt. Gelöschte/korrigierte Quellen und widersprüchliche Dialogrunden werden nicht erneut als Wahrheit an Gemma gesendet; das Roharchiv bleibt vollständig erhalten. Eindeutige Pronomen werden anhand faktischer Benutzeraussagen aufgelöst; mehrdeutige Bezüge bleiben offen. Erinnerungen sind zitierte Daten, keine Anweisungen. GIZMO soll sie situationsgerecht statt als Dossier verwenden, fehlende Details nicht erfinden und unnötige Rückfragen vermeiden.
 
-Ollama ignoriert je nach Modell oder Version einige Optionen. API-Fehler erscheinen im Ergebnis als Abbruchgrund. Reale Ollama- und Windows-Studio-Tests wurden hier nicht durchgeführt; insbesondere Q/ESC während Modellladen und Generierung, GPU-Freigabe und Prozessbaum-Abschaltung brauchen einen Test am Studio-PC.
+## Kontext und Analyse
 
-## Geplante Memory-Core-Schnittstellen
+Persönlichkeit, Zeitinformationen, Erinnerungen, vollständige Dialogrunden und Antwortreserve teilen sich ein konservatives Kontextbudget nach UTF-8-Bytegrenzen mit zusätzlicher Template-Reserve. num_ctx und num_predict werden tatsächlich an Ollama gesendet. working_messages: 20 ist keine starre Obergrenze mehr. history_token_budget begrenzt optional den Verlauf, memory_token_budget den Erinnerungsanteil. Zu große Persönlichkeit oder aktuelle Nachricht führen zu einer sichtbaren Meldung statt stillem Abschneiden. Alte Nachrichten bleiben in SQLite.
 
-- `IdentityCore.load() -> system_prompt`: editierbares Profil.
-- `WorkingMemory.append(role, text)` und `recent(limit)`: aktueller Dialog.
-- `SemanticMemory.add(fact, source)` und `search(query)`: dauerhafte Fakten in SQLite mit FTS5.
-- `EpisodicMemory.add(event, timestamp)` und `search(query)`: datierte Ereignisse.
-- `NarrativeMemory.summarize(events)`: verdichtete Erzählstränge.
-- `MemoryRetrieval.retrieve(query, budget)`: kombinierte FTS5-Suche, optional lokale semantische Suche.
-- `MemoryConsolidation.run()`: kontrolliertes Verdichten mit Herkunftsnachweis.
-- `ModelAdapter.chat(messages, options)`: austauschbares Modellinterface.
+Nach Antworten analysiert dasselbe lokale Modell Benutzeraussagen im Hintergrund. Thinking ist aus; Schema, Typen und wörtliche Belege werden geprüft. Die Analyse streamt und kann bei neuer Eingabe unterbrochen werden. Teilantworten werden nicht gespeichert. Beim ersten Start von 0.3.2 wird eine bestehende Datenbank vor der Migration gesichert und das Benutzerarchiv einmal zur verbesserten Analyse eingereiht. Schema 5 ergänzt Quellen-, Such- und Normalisierungsmetadaten. Nachrichten, IDs, manuelle Entscheidungen und Sicherungen bleiben erhalten. Alte Angaben müssen nicht erneut erzählt werden.
 
-Diese Schnittstellen sind Entwurf; es wird noch kein Memory Core implementiert. SQLite und FTS5 reichen als geplante Basis ohne zusätzliche Infrastruktur.
+`/reanalyze` verarbeitet auch erledigte Archivaufträge erneut. Identische Objekt-/Wertdarstellungen werden zusammengeführt; zusätzliche Quellen bleiben erhalten. Gelöschte und manuell überholte Angaben werden nicht automatisch wiederhergestellt. `/retry-analysis` reiht Fehler erneut ein. `/memory`, `/entities`, `/relations`, `/memstatus`, `/correct ID WERT`, `/delete ID`, `/approve-relation ID`, `/delete-relation ID`, `/backup DATEI.sqlite3` und `/export DATEI.json` bleiben verfügbar.
 
-## Gedächtnis und Prüfung
+## Lokale Abnahme
 
-Das lokale SQLite/FTS5-Gedächtnis archiviert Gespräche und ruft bestätigte Fakten ab. `/memory`, `/correct ID WERT`, `/delete ID`, `/backup DATEI.sqlite3` und `/export DATEI.json` verwalten es. `--debug` zeigt Abruf, gesendete Nachrichten und Zeitmessungen; die Ausgabe enthält private Daten. [Architektur und Grenzen](MEMORY.md) sowie [manueller Windows-Testplan](WINDOWS-TESTPLAN.md) gehören zum Paket. Standard sind `num_ctx: 8192`, `working_messages: 20` und `memory_token_budget: 300`.
+```powershell
+.venv/Scripts/python.exe gizmo_lab/qa_local.py
+.venv/Scripts/python.exe gizmo_lab/qa_local.py --real-gemma
+```
 
-## Intelligente Analyse 0.3
+Alternativ gizmo_lab/run-local-qa.cmd. Die reale QA umfasst deutsche Tests und englische End-to-End-Gespräche mit dem öffentlichen synthetischen Profil qa_personality.en.txt: tatsächliche Antworten nach 30 Runden, neuer Python-Prozess und leeres Dialogfenster, indirekte Bezüge, ältere Themen, Charaktergrenzen, Fakten/Fiktion, Archive, Löschschutz, Modellwechsel, Zeiten, VRAM und Studio-Safe-Abschaltung. Daten/Berichte liegen ausschließlich in einem neuen ignorierten .local-test/qa-Verzeichnis. Private Gespräche, Einstellungen und Profile werden nicht geöffnet. Für den Modellwechsel wird nur ein bereits installiertes qwen2.5:7b verwendet; fehlt es, meldet die QA einen Fehler statt es herunterzuladen.
 
-Nach sichtbaren Antworten analysiert LAB Benutzernachrichten mit demselben lokalen Ollama-Modell. `/entities`, `/relations`, `/memstatus`, `/reanalyze` und `/retry-analysis` zeigen Entitäten, Beziehungen und die persistente Auftragswarteschlange. [Architektur, Validierung und Grenzen](ARCHITEKTUR-0.3.md) sowie der [Windows-Testplan 0.3](WINDOWS-TESTPLAN-0.3.md) erläutern die erste Entwicklungsstufe. Hypothesen, fiktionale Aussagen und Pronomenbezüge werden konservativ gekennzeichnet.
+## Grenzen
+
+Extraktion und Wortwahl bleiben modellabhängig. Symbolische Graphsuche ersetzt keine umfassende semantische Suche; die lexikalischen Sprachhilfen decken Englisch und Deutsch ab. Kleine Budgets und mehrdeutige Quellen können Fakten zurückhalten. Lösch-/Korrekturschutz blendet konservativ ganze betroffene Dialogrunden aus, ohne das Roharchiv zu löschen. Charaktertests prüfen konkrete Eigenschaften, keine allgemeine Persönlichkeitstreue. Vektorsuche, automatische Episodenzusammenfassungen und umfassende Konsolidierung sind weiterhin nicht implementiert.

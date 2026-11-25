@@ -5,11 +5,36 @@ from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
-from memory import Memory
+from memory import Memory, SCHEMA
 from version import VERSION, SCHEMA_VERSION
 
 
 class UpgradeTest(unittest.TestCase):
+    def test_v031_relation_columns_and_search_backfill_preserve_original_rows(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path=Path(temporary)/'memory.sqlite3'
+            with closing(sqlite3.connect(path)) as old:
+                old.executescript(SCHEMA)
+                old.execute("INSERT INTO conversations VALUES('synthetic','2026-01-01',NULL)")
+                old.execute("INSERT INTO messages VALUES(1,'synthetic','user','My dog is Milo.','2026-01-01')")
+                old.execute("INSERT INTO entities VALUES(1,'USER','person','active','2026-01-01')")
+                old.execute("INSERT INTO entities VALUES(2,'Milo','pet','active','2026-01-01')")
+                old.execute("INSERT INTO relations VALUES(1,1,'has_dog',2,'',1,'My dog is Milo.',.95,'active','legacy-fingerprint','2026-01-01')")
+                old.execute("INSERT INTO relation_sources VALUES(1,1,'My dog is Milo.')")
+                old.execute("INSERT INTO lab_metadata VALUES('app_version','0.3.1')")
+                old.execute("INSERT INTO lab_metadata VALUES('analysis_revision','0.3.1')")
+                old.execute('PRAGMA user_version=4')
+                old.commit()
+            upgraded=Memory(path)
+            try:
+                self.assertEqual(upgraded.db.execute('SELECT text FROM messages').fetchone()[0],'My dog is Milo.')
+                self.assertEqual(upgraded.db.execute('SELECT fingerprint FROM relations').fetchone()[0],'legacy-fingerprint')
+                self.assertTrue(upgraded.db.execute('SELECT claim_key FROM relations').fetchone()[0])
+                self.assertIn('Milo','\n'.join(upgraded.retrieve('What is my dog called?')[0]))
+                self.assertEqual(upgraded.reindexed_jobs,1)
+                self.assertEqual(len(list(path.parent.glob('*.bak'))),1)
+            finally:
+                upgraded.close()
     def legacy(self,path):
         store=Memory(path)
         conversation=store.conversation()
@@ -33,7 +58,7 @@ class UpgradeTest(unittest.TestCase):
             store=Memory(path)
             try:
                 self.assertEqual(store.retried_jobs,1)
-                self.assertEqual(store.job_counts(),{'pending':1,'done':1})
+                self.assertEqual(store.job_counts(),{'pending':2})
                 self.assertEqual(store.list_memories()[0]['value'],'Blake')
                 backups=list(path.parent.glob('*.bak'))
                 self.assertEqual(len(backups),1)
@@ -43,6 +68,8 @@ class UpgradeTest(unittest.TestCase):
                     self.assertEqual(old.execute('PRAGMA integrity_check').fetchone()[0],'ok')
                 job=store.next_job()
                 store.finish_job(job['id'],'new model failure')
+                completed=store.next_job()
+                store.finish_job(completed['id'])
             finally:
                 store.close()
             reopened=Memory(path)

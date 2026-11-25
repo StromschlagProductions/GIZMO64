@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from analysis import Analyzer, validate_claim, KINDS, PREDICATES, SCOPES
 from memory import Memory
+from version import VERSION
 
 
 def claim(subject,predicate,obj,value,evidence,confidence=.95,scope='personal',subject_kind='person',object_kind='other'):
@@ -57,6 +58,21 @@ class AnalysisTest(unittest.TestCase):
                 analyzer.stop()
                 store.close()
 
+    def test_interrupted_analysis_stream_never_stores_partial_claims(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'memory.sqlite3'
+            store=Memory(path)
+            store.enqueue(store.add_message(store.conversation(),'user','My dog is Milo.'))
+            def opener(request,timeout):
+                return io.BytesIO(b'{"message":{"content":"{\\"claims\\":[]}"},"done":false}\n')
+            analyzer=Analyzer(path,{'model':'gemma4:12b'},opener)
+            try:
+                self.assertFalse(analyzer.analyze_one())
+                self.assertEqual(store.job_counts(),{'failed':1})
+                self.assertEqual(store.list_relations(),[])
+            finally:
+                analyzer.stop();store.close()
+
     def test_people_relations_reanalysis_and_resume(self):
         with tempfile.TemporaryDirectory() as folder:
             path=Path(folder)/'memory.sqlite3'
@@ -90,7 +106,7 @@ class AnalysisTest(unittest.TestCase):
             self.assertEqual(relations[0]['subject'],'Alex')
             self.assertEqual(relations[0]['object'],'Emma')
             self.assertEqual(relations[1]['subject'],'Emma')
-            self.assertEqual(relations[1]['status'],'pending')
+            self.assertEqual(relations[1]['status'],'active')
             self.assertEqual(relations[3]['object'],'Milo')
             self.assertTrue(all(request['format']['type']=='object' for request in calls))
             analyzer.stop();store.close()
@@ -158,7 +174,7 @@ class AnalysisTest(unittest.TestCase):
             old.commit();old.close()
             migrated=Memory(path)
             self.assertEqual(migrated.db.execute('SELECT value FROM marker').fetchone()[0],'keep')
-            self.assertTrue(list(Path(folder).glob('*.pre-v0.3.1-*.bak')))
+            self.assertTrue(list(Path(folder).glob('*.pre-v'+VERSION+'-*.bak')))
             migrated.close()
 
 

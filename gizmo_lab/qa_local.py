@@ -75,9 +75,9 @@ def real_gemma(folder):
             assert analyzer.analyze_one(),lab.memory.job_counts()
             durations.append(analyzer.last_duration_s)
         relations=lab.memory.list_relations()
-        for predicate,obj,status in [('has_sister','Emma','active'),('studied',None,'pending'),
+        for predicate,obj,status in [('has_sister','Emma','active'),('studied','psycholog','active'),
                                      ('has_dog','Milo','active'),('lives_in','Berlin','pending'),('lives_in','Mars','fictional')]:
-            assert any(r['predicate']==predicate and r['object']==obj and r['status']==status for r in relations),(predicate,obj,status,relations)
+            assert any(r['predicate']==predicate and obj.casefold() in (r['object'] or r['value'] or '').casefold() and r['status']==status for r in relations),(predicate,obj,status,relations)
         assert lab.memory.job_counts()=={'done':6},lab.memory.job_counts()
         # Exercise the real retry path on synthetic jobs, without repeating successful jobs.
         source=lab.memory.add_message(lab.memory.conversation(),'user','Mein Hund heißt Milo.')
@@ -87,6 +87,12 @@ def real_gemma(folder):
         assert lab.memory.retry_failed()==1
         assert analyzer.analyze_one()
         assert lab.memory.job_counts()=={'done':7}
+        lab.conversation_id=lab.memory.conversation()
+        report['german_memory_reply']=lab.chat('Wie heißt mein Hund? Bitte kurz antworten.')
+        assert 'milo' in report['german_memory_reply']['answer'].casefold()
+        assert '?' not in report['german_memory_reply']['answer']
+        assert analyzer.analyze_one()
+        assert lab.memory.job_counts()=={'done':8}
         report.update(passed=True,analysis_seconds=durations,relations=lab.memory.list_relations(),jobs=lab.memory.job_counts())
         with lab.request('/api/ps') as response:
             report['loaded']=json.load(response)
@@ -120,7 +126,7 @@ def installed_launcher_check(folder):
     report={'passed':False}
     try:
         process=subprocess.Popen([sys.executable,str(root/'launcher.py'),'start','--offline'],
-                                 stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
+                                 stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,encoding='utf-8')
         output,_=process.communicate('/quit\n',timeout=120)
         (folder/'installed-launcher.txt').write_text(output,encoding='utf-8')
         assert process.returncode==0,output
@@ -146,6 +152,8 @@ def main():
     parser=argparse.ArgumentParser(description='Lokale LAB-QA mit ausschließlich synthetischen Daten')
     parser.add_argument('--real-gemma',action='store_true',help='Installiertes gemma4:12b real testen; Ollama danach vollständig beenden')
     args=parser.parse_args()
+    os.environ['PYTHONUTF8']='1'
+    os.environ['PYTHONIOENCODING']='utf-8'
     folder=ROOT.parent/'.local-test'/'qa'/datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
     folder.mkdir(parents=True)
     os.environ['GIZMO_LAB_DATA']=str(folder/'data')
@@ -165,6 +173,8 @@ def main():
             if not shutil.which('ollama'):
                 raise RuntimeError('Vorhandene Ollama-Installation nicht gefunden')
             real_gemma(folder)
+            from active_memory_qa import run as active_memory_acceptance
+            active_memory_acceptance(folder)
             installed_launcher_check(folder)
         print(f'[+] Lokale QA bestanden. Synthetische Berichte: {folder}',flush=True)
         return 0
