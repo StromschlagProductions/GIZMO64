@@ -1,4 +1,6 @@
-# GIZMO LAB 0.3
+# GIZMO LAB 0.3.1
+
+Der reparierte Windows-Stand mit real geprüfter Gemma-Extraktion, automatischer Sicherung vor Versionsmigrationen und erneut verarbeitbaren Altaufträgen. [Lokaler Start, Updates und Qualitätssicherung](LOCAL-DEVELOPMENT.md). Für den Alltag dient nach einmaliger Installation `GIZMO.cmd`; ZIP-Dateien müssen nicht mehr manuell ersetzt werden.
 
 Lokale Windows-Terminalumgebung für Modell- und Persönlichkeitstests. Der C64-Client und die produktive Brücke werden nicht verwendet oder verändert. Die neutrale Persönlichkeit in `personality.example.txt` entspricht dem 0.2.1-Prompt.
 

@@ -1,7 +1,15 @@
 name: Build GIZMO64
 on:
   push:
+    paths-ignore:
+      - 'gizmo_lab/**'
+      - '.gitignore'
+    branches:
+      - '**'
   pull_request:
+    paths-ignore:
+      - 'gizmo_lab/**'
+      - '.gitignore'
   workflow_dispatch:
 jobs:
   build:

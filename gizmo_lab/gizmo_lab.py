@@ -14,6 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from memory import Memory, utc_now
 from analysis import Analyzer
+from version import VERSION
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_MODEL = 'gemma4:12b'
@@ -366,6 +367,8 @@ def main():
         lab.stop()
         raise KeyboardInterrupt
     signal.signal(signal.SIGINT, stop_signal)
+    if os.name=='nt':
+        signal.signal(signal.SIGBREAK, stop_signal)
     def windows_watch(done):
         import msvcrt
         while not done.is_set() and not lab.stop_event.is_set():
@@ -386,7 +389,9 @@ def main():
             done.set()
             watcher.join(timeout=1)
     try:
-        print('[.] GIZMO LAB // LOKALES TERMINAL', flush=True)
+        print(f'[.] GIZMO LAB {VERSION} // LOKALES TERMINAL', flush=True)
+        if lab.memory.retried_jobs:
+            print(f'[i] {lab.memory.retried_jobs} fehlgeschlagene Altanalysen erneut eingereiht.',flush=True)
         interruptible(lab.start)
         if args.benchmark:
             questions = json.loads((ROOT / 'questions.json').read_text(encoding='utf-8'))

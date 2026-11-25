@@ -5,10 +5,13 @@ import re
 import sqlite3
 import time
 import uuid
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
+from version import VERSION, SCHEMA_VERSION, ANALYSIS_REVISION
 
 SCHEMA = '''
+CREATE TABLE IF NOT EXISTS lab_metadata(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS conversations(id TEXT PRIMARY KEY, started_at TEXT NOT NULL, ended_at TEXT);
 CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY, conversation_id TEXT NOT NULL, role TEXT NOT NULL, text TEXT NOT NULL, created_at TEXT NOT NULL, FOREIGN KEY(conversation_id) REFERENCES conversations(id));
 CREATE INDEX IF NOT EXISTS messages_conversation ON messages(conversation_id,id);
@@ -33,23 +36,34 @@ def utc_now():
 
 class Memory:
     def __init__(self, path):
-        self.path = Path(path)
+        self.path = Path(path).resolve()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         if self.path.exists():
-            probe=sqlite3.connect(self.path)
-            needs_migration=not probe.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='analysis_jobs'").fetchone()
-            if needs_migration:
-                backup=self.path.with_name(self.path.name+'.pre-v03-'+datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')+'.bak')
-                with sqlite3.connect(backup) as target:
-                    probe.backup(target)
-            probe.close()
+            with closing(sqlite3.connect(self.path.as_uri()+'?mode=ro',uri=True)) as probe:
+                schema_version=probe.execute('PRAGMA user_version').fetchone()[0]
+                if schema_version>SCHEMA_VERSION:
+                    raise RuntimeError('Datenbank stammt aus einer neueren LAB-Version; kein Downgrade erlaubt')
+                has_meta=probe.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='lab_metadata'").fetchone()
+                previous=probe.execute("SELECT value FROM lab_metadata WHERE key='app_version'").fetchone() if has_meta else None
+                if not previous or previous[0]!=VERSION or schema_version!=SCHEMA_VERSION:
+                    backup=self.path.with_name(self.path.name+'.pre-v'+VERSION+'-'+datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S-%f')+'.bak')
+                    with closing(sqlite3.connect(backup)) as target:
+                        probe.backup(target)
+                        if target.execute('PRAGMA integrity_check').fetchone()[0]!='ok':
+                            raise RuntimeError('Datenbanksicherung fehlgeschlagen; Start abgebrochen')
         self.db = sqlite3.connect(self.path,check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.execute('PRAGMA foreign_keys=ON')
         self.db.execute('PRAGMA journal_mode=WAL')
         self.db.executescript(SCHEMA)
-        self.db.execute('PRAGMA user_version=3')
         with self.db:
+            revision=self.db.execute("SELECT value FROM lab_metadata WHERE key='analysis_revision'").fetchone()
+            self.retried_jobs=0
+            if not revision or revision[0]!=ANALYSIS_REVISION:
+                self.retried_jobs=self.db.execute("UPDATE analysis_jobs SET status='pending',error=NULL,updated_at=? WHERE status='failed'",(utc_now(),)).rowcount
+            self.db.execute("INSERT OR REPLACE INTO lab_metadata VALUES('analysis_revision',?)",(ANALYSIS_REVISION,))
+            self.db.execute("INSERT OR REPLACE INTO lab_metadata VALUES('app_version',?)",(VERSION,))
+            self.db.execute(f'PRAGMA user_version={SCHEMA_VERSION}')
             self.db.execute("UPDATE analysis_jobs SET status='pending' WHERE status='processing'")
 
     def close(self):
@@ -263,6 +277,6 @@ class Memory:
     def backup(self,destination):
         destination=Path(destination)
         destination.parent.mkdir(parents=True,exist_ok=True)
-        with sqlite3.connect(destination) as target:
+        with closing(sqlite3.connect(destination)) as target:
             self.db.backup(target)
         return destination

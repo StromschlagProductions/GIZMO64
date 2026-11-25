@@ -11,16 +11,22 @@ KINDS={'person','pet','project','place','film','computer','other'}
 PREDICATES={'has_sister','has_brother','has_dog','has_cat','friend_of','studied','works_as','likes','dislikes','lives_in','discussed','created','experienced','related_to'}
 SCOPES={'personal','episodic','semantic','narrative','hypothesis'}
 SCHEMA={'type':'object','properties':{'claims':{'type':'array','items':{'type':'object','properties':{
-    'subject':{'type':'string'},'subject_kind':{'type':'string'},'predicate':{'type':'string'},
-    'object':{'type':'string'},'object_kind':{'type':'string'},'value':{'type':'string'},
-    'evidence':{'type':'string'},'scope':{'type':'string'},'confidence':{'type':'number'}},
+    'subject':{'type':'string'},'subject_kind':{'type':'string','enum':sorted(KINDS)},'predicate':{'type':'string','enum':sorted(PREDICATES)},
+    'object':{'type':'string'},'object_kind':{'type':'string','enum':sorted(KINDS)},'value':{'type':'string'},
+    'evidence':{'type':'string'},'scope':{'type':'string','enum':sorted(SCOPES)},'confidence':{'type':'number','minimum':0,'maximum':1}},
     'required':['subject','subject_kind','predicate','object','object_kind','value','evidence','scope','confidence'],
     'additionalProperties':False}}},'required':['claims'],'additionalProperties':False}
 PROMPT=('Extract only information the USER supplied in the newest message. Use earlier turns only to resolve clear references. '
         'Return JSON matching the schema. Quote an exact evidence span from the newest user message. '
         'Never treat assistant claims as personal facts. For ambiguity use scope hypothesis. '
         'For fictional stories use scope narrative. If nothing is supported, return an empty claims list. '
-        'Use short canonical predicates from the schema vocabulary.')
+        'Use only the enum values in the schema. '
+        'Represent the speaker as USER unless their name is explicitly known from the context. '
+        'For "My sister is Emma", use subject USER, predicate has_sister, object Emma, object_kind person. '
+        'For "My dog is Milo", use subject USER, predicate has_dog, object Milo, object_kind pet. '
+        'For a literal attribute such as a subject studied psychology, use predicate studied, object "", object_kind other, value psychology. '
+        'Preserve names and exact evidence in the original language. Earlier messages are context, not new claims. '
+        'The response schema is: '+json.dumps(SCHEMA))
 
 
 def validate_claim(claim, source):
@@ -39,9 +45,9 @@ def validate_claim(claim, source):
         return None
     if not 0<=confidence<=1 or not claim['subject'].strip() or (not claim['object'].strip() and not claim['value'].strip()):
         return None
-    speculative=bool(re.search(r'\b(maybe|perhaps|might|could|possibly|what if|suppose)\b',source,re.I))
-    fictional=bool(re.search(r'\b(in our story|in this story|fictional|imagine|roleplay)\b',source,re.I))
-    pronoun=bool(re.match(r'\s*(she|he|they|her|his|their)\b',evidence,re.I))
+    speculative=bool(re.search(r'\b(maybe|perhaps|might|could|possibly|what if|suppose|vielleicht|eventuell|möglicherweise|könnte|könnten|was wäre wenn)\b',source,re.I))
+    fictional=bool(re.search(r'\b(in our story|in this story|fictional|imagine|roleplay|in unserer (?:erfundenen )?geschichte|in dieser geschichte|erfunden|fiktional|stell dir vor|rollenspiel)\b',source,re.I))
+    pronoun=bool(re.match(r'\s*(she|he|they|her|his|their|sie|er|ihr|ihre|sein|seine)\b',evidence,re.I))
     status='active' if claim['scope'] in ('personal','semantic','episodic') and confidence>=.8 and not speculative and not pronoun else 'pending'
     if claim['scope']=='narrative' or fictional:
         status='fictional'
@@ -99,7 +105,7 @@ class Analyzer:
             payload={'model':self.config.get('model','gemma4:12b'),
                      'messages':[{'role':'system','content':PROMPT},
                                  {'role':'user','content':json.dumps(context,ensure_ascii=False)}],
-                     'format':SCHEMA,'stream':False,'keep_alive':self.config.get('keep_alive',-1),
+                     'format':SCHEMA,'stream':False,'think':False,'keep_alive':self.config.get('keep_alive',-1),
                      'options':{'temperature':0,'num_predict':350,'num_ctx':self.config.get('num_ctx',8192)}}
             request=urllib.request.Request(self.config.get('ollama_url','http://localhost:11434').rstrip('/')+'/api/chat',
                                            data=json.dumps(payload).encode('utf-8'),headers={'Content-Type':'application/json'})
@@ -110,6 +116,8 @@ class Analyzer:
             if self.stop_event.is_set() or self.pause_event.is_set():
                 self.memory.finish_job(job['id'],'cancelled')
                 return False
+            if event.get('done_reason')=='length':
+                raise ValueError('Analyse am Ausgabetokenlimit abgeschnitten')
             parsed=json.loads(event['message']['content'])
             if not isinstance(parsed,dict) or not isinstance(parsed.get('claims'),list):
                 raise ValueError('Ungueltige JSON-Claims')

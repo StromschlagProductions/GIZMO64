@@ -41,6 +41,7 @@ class LabTest(unittest.TestCase):
             paths=run_benchmark(lab,[{'id':'neutral','turns':['Frage']}],[{'model':'test','options':{}}],Path(folder)/'reports')
             self.assertTrue(all(path.exists() for path in paths))
             self.assertEqual(json.loads(paths[0].read_text())[0]['answer'],'Antwort')
+            lab.stop()
 
     def test_real_cold_unload_then_warm_preload(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -61,5 +62,6 @@ class LabTest(unittest.TestCase):
             self.assertEqual(rows[0]['personality_sha256'],rows[1]['personality_sha256'])
             self.assertEqual([req['keep_alive'] for req in requests],[0,-1])
             self.assertEqual(lab.config['temperature'],.7)
+            lab.stop()
 
 if __name__=='__main__': unittest.main()

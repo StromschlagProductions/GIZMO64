@@ -18,3 +18,10 @@ gizmo_lab/*.sqlite*
 *.sqlite3-*
 *.db
 GIZMO_Awakening_V2_EN.txt
+.venv/
+.local-test/
+.local-tools/
+.lab-production/
+GIZMO.cmd
+GIZMO-Update.cmd
+*.bak

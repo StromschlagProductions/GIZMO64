@@ -4,7 +4,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
-from analysis import Analyzer, validate_claim
+from analysis import Analyzer, validate_claim, KINDS, PREDICATES, SCOPES
 from memory import Memory
 
 
@@ -29,6 +29,34 @@ class AnalysisTest(unittest.TestCase):
         pronoun=claim('Emma','studied','','psychology','She studied psychology')
         self.assertEqual(validate_claim(pronoun,'She studied psychology')['status'],'pending')
 
+    def test_german_uncertainty_fiction_and_pronouns(self):
+        for source,evidence,status in [
+            ('Vielleicht wohnt Emma in Berlin.','Emma in Berlin','pending'),
+            ('In unserer erfundenen Geschichte lebt Emma auf dem Mars.','Emma auf dem Mars','fictional'),
+            ('Sie hat Psychologie studiert.','Sie hat Psychologie studiert.','pending'),
+        ]:
+            with self.subTest(source=source):
+                item=claim('Emma','related_to','','test',evidence)
+                self.assertEqual(validate_claim(item,source)['status'],status)
+
+    def test_truncated_model_output_is_failed_not_committed(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'memory.sqlite3'
+            store=Memory(path)
+            mid=store.add_message(store.conversation(),'user','My dog is named Milo.')
+            store.enqueue(mid)
+            def opener(request,timeout):
+                return io.BytesIO(json.dumps({'done_reason':'length','message':{'content':'{"claims":[]}'}}).encode())
+            analyzer=Analyzer(path,{'model':'gemma4:12b'},opener)
+            try:
+                self.assertFalse(analyzer.analyze_one())
+                self.assertEqual(store.job_counts(),{'failed':1})
+                self.assertEqual(store.list_relations(),[])
+                self.assertIn('Token'.lower(),store.db.execute('SELECT error FROM analysis_jobs').fetchone()[0].lower())
+            finally:
+                analyzer.stop()
+                store.close()
+
     def test_people_relations_reanalysis_and_resume(self):
         with tempfile.TemporaryDirectory() as folder:
             path=Path(folder)/'memory.sqlite3'
@@ -44,6 +72,11 @@ class AnalysisTest(unittest.TestCase):
             def opener(request,timeout):
                 payload=json.loads(request.data)
                 calls.append(payload)
+                self.assertIs(payload['think'],False)
+                properties=payload['format']['properties']['claims']['items']['properties']
+                self.assertEqual(set(properties['predicate']['enum']),PREDICATES)
+                self.assertEqual(set(properties['subject_kind']['enum']),KINDS)
+                self.assertEqual(set(properties['scope']['enum']),SCOPES)
                 context=json.loads(payload['messages'][-1]['content'])
                 source=context[-1]['text']
                 item=produced[texts.index(source)]
@@ -125,7 +158,7 @@ class AnalysisTest(unittest.TestCase):
             old.commit();old.close()
             migrated=Memory(path)
             self.assertEqual(migrated.db.execute('SELECT value FROM marker').fetchone()[0],'keep')
-            self.assertTrue(list(Path(folder).glob('*.pre-v03-*.bak')))
+            self.assertTrue(list(Path(folder).glob('*.pre-v0.3.1-*.bak')))
             migrated.close()
 
 
