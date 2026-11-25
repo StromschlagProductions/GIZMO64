@@ -1,0 +1,12 @@
+[
+  {
+    "model": "richardyoung/qwen2.5-7b-instruct-abliterated:latest",
+    "start": "cold",
+    "options": {"temperature": 0.7, "top_p": 0.9}
+  },
+  {
+    "model": "richardyoung/qwen2.5-7b-instruct-abliterated:latest",
+    "start": "warm",
+    "options": {"temperature": 0.7, "top_p": 0.9}
+  }
+]

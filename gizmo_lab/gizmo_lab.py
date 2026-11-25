@@ -1,5 +1,6 @@
 """Lokales GIZMO-LAB: Terminalgespräche und reproduzierbare Ollama-Benchmarks."""
 import argparse
+import hashlib
 import json
 import os
 import signal
@@ -32,12 +33,19 @@ def load_config(data):
     return config
 
 
+def should_quit(prompt):
+    return prompt.strip().lower() in ('/quit', '/exit') or '\x1b' in prompt
+
+
 class Lab:
-    def __init__(self, config=None, data=None, opener=None, runner=None):
+    def __init__(self, config=None, data=None, opener=None, runner=None, personality_file=None):
         self.data = Path(data) if data else private_dir()
         self.config = config or load_config(self.data)
-        personality = self.data / 'personality.txt'
+        personality = Path(personality_file) if personality_file else self.data / 'personality.txt'
+        if personality_file and not personality.is_file():
+            raise FileNotFoundError(f'Persoenlichkeitsprofil fehlt: {personality}')
         self.personality = (personality if personality.exists() else ROOT / 'personality.example.txt').read_text(encoding='utf-8').strip()
+        self.profile_sha256 = hashlib.sha256(self.personality.encode('utf-8')).hexdigest()
         self.opener = opener or urllib.request.urlopen
         self.runner = runner or subprocess.run
         self.stop_event = threading.Event()
@@ -46,6 +54,7 @@ class Lab:
         self.active_response = None
         self.context = []
         self.model = None
+        self.preload_s = None
 
     def request(self, endpoint, payload=None, timeout=5):
         url = self.config.get('ollama_url', 'http://localhost:11434').rstrip('/') + endpoint
@@ -88,28 +97,41 @@ class Lab:
         if self.stop_event.is_set():
             raise RuntimeError('Modellladen abgebrochen')
         print(f'[.] Lade Modell {model}...', flush=True)
-        with self.request('/api/generate', {'model': model, 'prompt': '', 'stream': False,
-                                            'keep_alive': self.config.get('keep_alive', -1)}, timeout=120) as response:
-            self.active_response = response
-            result = json.load(response)
-            self.active_response = None
+        started = time.perf_counter()
+        try:
+            with self.request('/api/generate', {'model': model, 'prompt': '', 'stream': False,
+                                                'keep_alive': self.config.get('keep_alive', -1)}, timeout=120) as response:
+                self.active_response = response
+                try:
+                    result = json.load(response)
+                finally:
+                    self.active_response = None
+        except (OSError, ValueError) as error:
+            if self.stop_event.is_set():
+                raise RuntimeError('Modellladen abgebrochen') from error
+            raise
         if result.get('error'):
             raise RuntimeError(result['error'])
         if self.stop_event.is_set():
             raise RuntimeError('Modellladen abgebrochen')
         self.model = model
+        self.preload_s = time.perf_counter() - started
         print('[+] Modell vorgeladen', flush=True)
+
+    def unload(self, model):
+        with self.request('/api/generate', {'model': model, 'prompt': '',
+                                            'stream': False, 'keep_alive': 0}, timeout=30) as response:
+            result = json.load(response)
+        if result.get('error'):
+            raise RuntimeError(result['error'])
+        if self.model == model:
+            self.model = None
 
     def switch_model(self, model):
         if model == self.model:
             return
         if self.model:
-            try:
-                with self.request('/api/generate', {'model': self.model, 'prompt': '', 'stream': False,
-                                                    'keep_alive': 0}, timeout=10):
-                    pass
-            except OSError:
-                pass
+            self.unload(self.model)
         self.preload(model)
 
     def chat(self, prompt, context=None, on_text=None, model=None):
@@ -186,7 +208,8 @@ class Lab:
             self.context.extend([messages[-1], {'role': 'assistant', 'content': text}])
             self.context = self.context[-20:]
         speed = metrics.get('eval_count', 0) * 1e9 / metrics.get('eval_duration', 0) if metrics.get('eval_duration') else 0
-        return {'model': model, 'config': payload, 'first_text_s': first, 'total_s': elapsed,
+        return {'model': model, 'options': options, 'personality_sha256': self.profile_sha256,
+                'first_text_s': first, 'total_s': elapsed,
                 'prompt_tokens': metrics.get('prompt_eval_count'), 'generated_tokens': metrics.get('eval_count'),
                 'tokens_per_s': speed, 'abort_reason': aborted, 'answer': text,
                 'ollama_metrics': {key: metrics.get(key) for key in ('load_duration', 'prompt_eval_duration', 'eval_duration', 'total_duration')}}
@@ -204,16 +227,26 @@ class Lab:
                     pass
             if os.name == 'nt':
                 for image in ('ollama app.exe', 'ollama.exe', 'ollama_llama_server.exe'):
-                    self.runner(['taskkill', '/F', '/T', '/IM', image], capture_output=True, check=False, timeout=10)
+                    try:
+                        self.runner(['taskkill', '/F', '/T', '/IM', image], capture_output=True, check=False, timeout=10)
+                    except (OSError, subprocess.TimeoutExpired) as error:
+                        print(f'[!] Prozessabschluss {image}: {error}', flush=True)
                 for _ in range(3):
-                    listing = self.runner(['tasklist', '/FO', 'CSV', '/NH'], capture_output=True, text=True, timeout=10)
+                    try:
+                        listing = self.runner(['tasklist', '/FO', 'CSV', '/NH'], capture_output=True, text=True, timeout=10)
+                    except (OSError, subprocess.TimeoutExpired) as error:
+                        print(f'[!] Prozesspruefung fehlgeschlagen: {error}', flush=True)
+                        break
                     names = [line for line in listing.stdout.splitlines() if 'ollama' in line.lower()]
                     if not names:
                         break
                     for line in names:
                         parts = next(__import__('csv').reader([line]))
                         if len(parts) > 1:
-                            self.runner(['taskkill', '/F', '/T', '/PID', parts[1]], capture_output=True, timeout=10)
+                            try:
+                                self.runner(['taskkill', '/F', '/T', '/PID', parts[1]], capture_output=True, timeout=10)
+                            except (OSError, subprocess.TimeoutExpired) as error:
+                                print(f'[!] Prozessabschluss PID {parts[1]}: {error}', flush=True)
                 else:
                     print('[!] Ollama-Prozesse noch sichtbar', flush=True)
             elif self.process and self.process.poll() is None:
@@ -227,20 +260,35 @@ class Lab:
 
 def run_benchmark(lab, questions, variants, destination):
     results = []
+    base_config = dict(lab.config)
     for variant in variants:
-        lab.config.update(variant.get('options', {}))
+        lab.config = {**base_config, **variant.get('options', {})}
         model = variant.get('model', lab.config.get('model', DEFAULT_MODEL))
-        cold = lab.model != model
-        lab.switch_model(model)
+        mode = variant.get('start', 'warm')
+        if mode not in ('cold', 'warm'):
+            raise ValueError('start muss cold oder warm sein')
+        if lab.model and lab.model != model:
+            lab.unload(lab.model)
+        if mode == 'cold':
+            lab.unload(model)
+            preload_s = None
+        else:
+            already_loaded = lab.model == model
+            lab.switch_model(model)
+            preload_s = None if already_loaded else lab.preload_s
+        first_request = True
         for case in questions:
             context = []
             for prompt in case['turns']:
                 record = lab.chat(prompt, context=context, model=model)
+                cold = mode == 'cold' and first_request
                 record.update({'case': case['id'], 'prompt': prompt, 'cold_model_start': cold,
+                               'start_mode': 'cold' if cold else 'warm',
+                               'preload_s': preload_s if first_request else None,
                                'variant': variant})
                 results.append(record)
                 context.extend([{'role': 'user', 'content': prompt}, {'role': 'assistant', 'content': record['answer']}])
-            cold = False
+                first_request = False
     destination.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime('%Y%m%d-%H%M%S')
     json_path = destination / f'benchmark-{stamp}.json'
@@ -251,7 +299,8 @@ def run_benchmark(lab, questions, variants, destination):
         for item in results:
             report.write(f"## {item['case']} · {item['model']}\n\n")
             report.write(f"Konfiguration: `{json.dumps(item['variant'], ensure_ascii=False)}`  \n")
-            report.write(f"Kaltstart: {item['cold_model_start']} · Erstes Zeichen: {item['first_text_s']} s · Gesamt: {item['total_s']:.3f} s  \n")
+            report.write(f"Start: {item['start_mode']} · Vorladen: {item['preload_s']} s · Erstes Zeichen: {item['first_text_s']} s · Gesamt: {item['total_s']:.3f} s  \n")
+            report.write(f"Profil-SHA256: `{item['personality_sha256']}`  \n")
             report.write(f"Prompt-Tokens: {item['prompt_tokens']} · Antwort-Tokens: {item['generated_tokens']} · Tempo: {item['tokens_per_s']:.2f} Token/s · Abbruch: {item['abort_reason']}\n\n")
             report.write(f"**Frage:** {item['prompt']}\n\n**Antwort:** {item['answer']}\n\n")
     return json_path, md_path
@@ -261,8 +310,9 @@ def main():
     parser = argparse.ArgumentParser(description='GIZMO LAB')
     parser.add_argument('--benchmark', action='store_true')
     parser.add_argument('--variants', type=Path, help='JSON-Datei mit Modell- und Parametersätzen')
+    parser.add_argument('--personality', type=Path, help='UTF-8-Profil, für alle Varianten identisch')
     args = parser.parse_args()
-    lab = Lab()
+    lab = Lab(personality_file=args.personality)
     def stop_signal(_signal, _frame):
         lab.stop()
         raise KeyboardInterrupt
@@ -301,7 +351,7 @@ def main():
                     prompt = input('Du > ')
                 except EOFError:
                     break
-                if prompt.strip().lower() in ('/quit', '/exit', 'q') or '\x1b' in prompt:
+                if should_quit(prompt):
                     break
                 if prompt.startswith('/model '):
                     interruptible(lambda: lab.switch_model(prompt[7:].strip()))
