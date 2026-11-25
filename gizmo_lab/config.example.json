@@ -1,0 +1,14 @@
+{
+  "model": "richardyoung/qwen2.5-7b-instruct-abliterated:latest",
+  "ollama_url": "http://localhost:11434",
+  "temperature": 0.7,
+  "top_p": 0.9,
+  "top_k": 40,
+  "min_p": 0.0,
+  "repeat_penalty": 1.1,
+  "num_ctx": 4096,
+  "num_predict": 768,
+  "seed": null,
+  "keep_alive": -1,
+  "think": false
+}

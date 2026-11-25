@@ -9,3 +9,8 @@ build/
 *.prg
 *.PRG
 *.zip
+gizmo_lab/config.json
+gizmo_lab/personality.txt
+gizmo_lab/reports/
+gizmo_lab/*.db
+gizmo_lab/*.sqlite*
