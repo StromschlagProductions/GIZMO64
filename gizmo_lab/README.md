@@ -1,4 +1,4 @@
-# GIZMO LAB 0.2
+# GIZMO LAB 0.3
 
 Lokale Windows-Terminalumgebung für Modell- und Persönlichkeitstests. Der C64-Client und die produktive Brücke werden nicht verwendet oder verändert. Die neutrale Persönlichkeit in `personality.example.txt` entspricht dem 0.2.1-Prompt.
 
@@ -30,3 +30,7 @@ Diese Schnittstellen sind Entwurf; es wird noch kein Memory Core implementiert. 
 ## Gedächtnis und Prüfung
 
 Das lokale SQLite/FTS5-Gedächtnis archiviert Gespräche und ruft bestätigte Fakten ab. `/memory`, `/correct ID WERT`, `/delete ID`, `/backup DATEI.sqlite3` und `/export DATEI.json` verwalten es. `--debug` zeigt Abruf, gesendete Nachrichten und Zeitmessungen; die Ausgabe enthält private Daten. [Architektur und Grenzen](MEMORY.md) sowie [manueller Windows-Testplan](WINDOWS-TESTPLAN.md) gehören zum Paket. Standard sind `num_ctx: 8192`, `working_messages: 20` und `memory_token_budget: 300`.
+
+## Intelligente Analyse 0.3
+
+Nach sichtbaren Antworten analysiert LAB Benutzernachrichten mit demselben lokalen Ollama-Modell. `/entities`, `/relations`, `/memstatus`, `/reanalyze` und `/retry-analysis` zeigen Entitäten, Beziehungen und die persistente Auftragswarteschlange. [Architektur, Validierung und Grenzen](ARCHITEKTUR-0.3.md) sowie der [Windows-Testplan 0.3](WINDOWS-TESTPLAN-0.3.md) erläutern die erste Entwicklungsstufe. Hypothesen, fiktionale Aussagen und Pronomenbezüge werden konservativ gekennzeichnet.

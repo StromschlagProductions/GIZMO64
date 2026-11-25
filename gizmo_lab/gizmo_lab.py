@@ -13,6 +13,7 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 from memory import Memory, utc_now
+from analysis import Analyzer
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_MODEL = 'gemma4:12b'
@@ -55,6 +56,7 @@ class Lab:
         self.active_response = None
         self.context = []
         self.memory = Memory(self.data / 'memory.sqlite3')
+        self.analyzer = None
         self.previous_message_at = self.memory.last_message_time()
         self.session_started = utc_now()
         self.conversation_id = self.memory.conversation(self.memory.latest_conversation())
@@ -98,6 +100,8 @@ class Lab:
                 raise RuntimeError('Ollama wurde nicht bereit')
         print('[+] Ollama bereit', flush=True)
         self.preload(self.config.get('model', DEFAULT_MODEL))
+        self.analyzer = Analyzer(self.memory.path,self.config,self.opener)
+        self.analyzer.start()
 
     def preload(self, model):
         if self.stop_event.is_set():
@@ -134,13 +138,20 @@ class Lab:
             self.model = None
 
     def switch_model(self, model):
+        if self.analyzer:
+            self.analyzer.pause()
         if model == self.model:
+            if self.analyzer: self.analyzer.resume()
             return
         if self.model:
             self.unload(self.model)
         self.preload(model)
+        self.config['model']=model
+        if self.analyzer: self.analyzer.resume()
 
     def chat(self, prompt, context=None, on_text=None, model=None):
+        if self.analyzer:
+            self.analyzer.pause()
         model = model or self.model or self.config.get('model', DEFAULT_MODEL)
         messages = [{'role': 'system', 'content': self.personality}]
         retrieved = []
@@ -230,9 +241,14 @@ class Lab:
                 self.memory.add_message(self.conversation_id,'assistant',text)
             extraction_started=time.perf_counter()
             self.memory.extract_user(prompt,source_id)
+            self.memory.enqueue(source_id)
             extraction_s=time.perf_counter()-extraction_started
             self.context = self.memory.recent(self.conversation_id,20)
+        if self.analyzer and not self.stop_event.is_set():
+            self.analyzer.resume()
         self.last_diagnostics['extraction_s']=extraction_s
+        self.last_diagnostics['analysis_s']=self.analyzer.last_duration_s if self.analyzer else 0
+        self.last_diagnostics['analysis_jobs']=self.memory.job_counts()
         speed = metrics.get('eval_count', 0) * 1e9 / metrics.get('eval_duration', 0) if metrics.get('eval_duration') else 0
         return {'model': model, 'options': options, 'personality_sha256': self.profile_sha256,
                 'memory_retrieval_s':retrieval_s,'memory_extraction_s':extraction_s,
@@ -246,6 +262,8 @@ class Lab:
             if self.stop_event.is_set():
                 return
             self.stop_event.set()
+            if self.analyzer:
+                self.analyzer.stop()
             response = self.active_response
             if response:
                 try:
@@ -282,6 +300,8 @@ class Lab:
                     self.process.wait(timeout=5)
                 except subprocess.TimeoutExpired:
                     self.process.kill()
+            if self.analyzer:
+                self.analyzer.stop()
             print('[+] GIZMO LAB beendet', flush=True)
             self.memory.close()
 
@@ -374,7 +394,7 @@ def main():
             files = interruptible(lambda: run_benchmark(lab, questions, variants, lab.data / 'reports'))
             print(f'[+] Berichte: {files[0]} und {files[1]}')
         else:
-            print('[i] Freier Dialog. /quit beendet, /model NAME wechselt das Modell, /memory zeigt Erinnerungen.')
+            print('[i] Freier Dialog. /quit, /model NAME, /memory, /entities, /relations, /reanalyze, /memstatus.')
             while not lab.stop_event.is_set():
                 try:
                     prompt = input('Du > ')
@@ -388,6 +408,31 @@ def main():
                 if prompt.strip() == '/memory':
                     for item in lab.memory.list_memories(include_pending=True):
                         print(f"#{item['id']} {item['status']} {item['domain']} {item['key']}: {item['value']}")
+                    continue
+                if prompt.strip() == '/entities':
+                    for item in lab.memory.list_entities():
+                        print(f"#{item['id']} {item['kind']}: {item['name']}")
+                    continue
+                if prompt.strip() == '/relations':
+                    for item in lab.memory.list_relations():
+                        print(f"#{item['id']} {item['status']} {item['subject']} {item['predicate']} {item['object'] or item['value']} [Quelle #{item['source_message_id']}]")
+                    continue
+                if prompt.startswith('/approve-relation '):
+                    lab.memory.set_relation_status(int(prompt[18:]),'active')
+                    continue
+                if prompt.startswith('/delete-relation '):
+                    lab.memory.set_relation_status(int(prompt[17:]),'deleted')
+                    continue
+                if prompt.strip() == '/reanalyze':
+                    print('[i] Archiv eingereiht:',lab.memory.enqueue_archive())
+                    continue
+                if prompt.strip() == '/retry-analysis':
+                    print('[i] Fehlgeschlagene Analysen erneut eingereiht:',lab.memory.retry_failed())
+                    continue
+                if prompt.strip() == '/memstatus':
+                    print('[i] Schema-Version:',lab.memory.db.execute('PRAGMA user_version').fetchone()[0],
+                          'Auftraege:',lab.memory.job_counts(),
+                          'letzte Analyse:',round(lab.analyzer.last_duration_s,3) if lab.analyzer else 0,'s')
                     continue
                 if prompt.startswith('/correct '):
                     ident, value = prompt[9:].split(' ', 1)
