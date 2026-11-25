@@ -8,6 +8,7 @@ import statistics
 import subprocess
 import sys
 import time
+from version import VERSION
 
 ROOT=Path(__file__).resolve().parent
 
@@ -67,7 +68,7 @@ def run_phase(folder,phase):
             for pattern in negative:
                 assert not re.search(pattern,answer,re.I),(label,'unexpected',pattern,item)
             if uncertain:
-                assert re.search(r'unsicher|unbekannt|nicht (?:bekannt|bestätigt|sicher|fest|in meinen Daten)|(?:weiß|weiss|wissen|kenne|kennst).*nicht|keine.*(?:angabe|information|bestätigt)|nicht.*(?:gesagt|erwähnt|mitgeteilt)|unklar|widersprüch|vermut|hypothes|nicht eindeutig|don.t (?:know|have)|not (?:know|confirmed|established|recorded|in my)|no (?:confirmed|reliable|information|record)|haven.t (?:told|established)|uncertain|unknown|conflict',answer,re.I),(label,'asserted unconfirmed fact',item)
+                assert re.search(r'unsicher|unbekannt|nicht (?:bekannt|bestätigt|sicher|fest|in meinen Daten)|(?:weiß|weiss|wissen|kenne|kennst).*nicht|keine.*(?:angabe|information|bestätigt)|nicht.*(?:gesagt|erwähnt|mitgeteilt)|unklar|widersprüch|vermut|hypothes|nicht eindeutig|don.t (?:know|have)|not (?:know|confirmed|established|recorded|in my)|isn.t (?:in (?:the|my) (?:data|records)|confirmed|known)|no (?:confirmed|reliable|information|record)|haven.t (?:told|established)|uncertain|unknown|conflict',answer,re.I),(label,'asserted unconfirmed fact',item)
             if no_question:
                 assert '?' not in answer,(label,'unnecessary follow-up',item)
             assert not re.search(r'\b(dein|deine|heißt|weiss|nicht|schwester|gespräch)\b',answer,re.I),(label,'English profile answered in German',item)
@@ -125,7 +126,7 @@ def run_phase(folder,phase):
             lab.switch_model('gemma4:12b')
             turn('Which subject did my sister study?', 'Gemma after switching back',positive=('psycholog',),no_question=True)
         elif phase=='archive':
-            assert list(data.glob('*.pre-v0.3.2-*.bak')),'No pre-upgrade backup'
+            assert list(data.glob(f'*.pre-v{VERSION}-*.bak')),'No pre-upgrade backup'
             turn('What did my sister study?', 'old archive without reentering facts',positive=('marine biology|meeresbiolog',),no_question=True)
             wait_analysis(lab)
             before=len(lab.memory.list_relations())

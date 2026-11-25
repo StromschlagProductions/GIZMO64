@@ -50,10 +50,13 @@ class Lab:
         if personality_file and not personality.is_file():
             raise FileNotFoundError(f'Persoenlichkeitsprofil fehlt: {personality}')
         self.personality = (personality if personality.exists() else ROOT / 'personality.example.txt').read_text(encoding='utf-8').strip()
+        self.personality_path = personality
         self.profile_sha256 = hashlib.sha256(self.personality.encode('utf-8')).hexdigest()
         self.opener = opener or urllib.request.urlopen
         self.runner = runner or subprocess.run
         self.stop_event = threading.Event()
+        self.chat_done = threading.Event()
+        self.chat_done.set()
         self.lock = threading.RLock()
         self.process = None
         self.active_response = None
@@ -65,6 +68,7 @@ class Lab:
         self.conversation_id = self.memory.conversation(self.memory.latest_conversation())
         self.last_diagnostics = {}
         self.model = None
+        self.ollama_ready = False
         self.preload_s = None
 
     def request(self, endpoint, payload=None, timeout=5):
@@ -102,6 +106,7 @@ class Lab:
             else:
                 raise RuntimeError('Ollama wurde nicht bereit')
         print('[+] Ollama bereit', flush=True)
+        self.ollama_ready = True
         self.preload(self.config.get('model', DEFAULT_MODEL))
         self.analyzer = Analyzer(self.memory.path,self.config,self.opener)
         self.analyzer.start()
@@ -143,16 +148,27 @@ class Lab:
     def switch_model(self, model):
         if self.analyzer:
             self.analyzer.pause()
-        if model == self.model:
-            if self.analyzer: self.analyzer.resume()
-            return
-        if self.model:
-            self.unload(self.model)
-        self.preload(model)
-        self.config['model']=model
-        if self.analyzer: self.analyzer.resume()
+        try:
+            if model == self.model:
+                return
+            if self.model:
+                self.unload(self.model)
+            self.preload(model)
+            self.config['model']=model
+        finally:
+            if self.analyzer:self.analyzer.resume()
 
     def chat(self, prompt, context=None, on_text=None, model=None):
+        with self.lock:
+            if self.stop_event.is_set():
+                raise RuntimeError('GIZMO LAB wird beendet')
+            self.chat_done.clear()
+        try:
+            return self._chat(prompt,context,on_text,model)
+        finally:
+            self.chat_done.set()
+
+    def _chat(self, prompt, context=None, on_text=None, model=None):
         if self.analyzer:
             self.analyzer.pause()
         model = model or self.model or self.config.get('model', DEFAULT_MODEL)
@@ -239,7 +255,7 @@ class Lab:
         text = ''.join(output)
         extraction_s = 0
         if context is None:
-            if text:
+            if text and aborted=='completed':
                 self.memory.add_message(self.conversation_id,'assistant',text)
             extraction_started=time.perf_counter()
             self.memory.extract_user(prompt,source_id)
@@ -272,6 +288,8 @@ class Lab:
                     response.close()
                 except OSError:
                     pass
+            # Chat owns message persistence; do not close SQLite underneath it.
+            self.chat_done.wait(timeout=15)
             if os.name == 'nt':
                 for image in ('ollama app.exe', 'ollama.exe', 'ollama_llama_server.exe'):
                     try:
@@ -305,6 +323,7 @@ class Lab:
             if self.analyzer:
                 self.analyzer.stop()
             print('[+] GIZMO LAB beendet', flush=True)
+            self.ollama_ready = False
             self.memory.close()
 
 
@@ -356,13 +375,480 @@ def run_benchmark(lab, questions, variants, destination):
     return json_path, md_path
 
 
+def run_gui(screenshot=None, qa_report=None):
+    """Qt presentation layer. LAB remains the sole owner of model and memory work."""
+    diagnostic=os.environ.get('GIZMO_GUI_LOG',os.devnull)
+    if sys.stdout is None:sys.stdout=open(diagnostic,'a',encoding='utf-8')
+    if sys.stderr is None:sys.stderr=open(diagnostic,'a',encoding='utf-8')
+    from PySide6.QtCore import Qt, QTimer, Signal, QObject, QProcess, QUrl
+    from PySide6.QtGui import QColor, QPainter, QPen
+    from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
+    from PySide6.QtWidgets import (QApplication, QWidget, QMainWindow, QVBoxLayout, QHBoxLayout,
+        QLabel, QPushButton, QFrame, QStackedWidget, QTextEdit, QLineEdit, QComboBox,
+        QGridLayout, QMessageBox, QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView,
+        QFormLayout, QDoubleSpinBox, QSpinBox, QFileDialog, QInputDialog)
+
+    class Pulse(QWidget):
+        def __init__(self, parent=None):
+            super().__init__(parent); self.phase=0; self.active=False; self.setFixedSize(76,76)
+            self.timer=QTimer(self); self.timer.timeout.connect(self.advance); self.timer.start(100)
+        def advance(self):
+            if self.active: self.phase=(self.phase+1)%30; self.update()
+        def paintEvent(self, event):
+            p=QPainter(self); p.setRenderHint(QPainter.Antialiasing)
+            c=QColor('#9bd6b8' if self.active else '#5a7871')
+            p.setPen(QPen(c,1)); p.drawEllipse(8,8,60,60)
+            p.setPen(QPen(c,2)); p.drawEllipse(18,18,40,40)
+            p.setBrush(QColor('#a9e1c3' if self.active else '#536e66')); p.setPen(Qt.NoPen)
+            radius=10+(self.phase//6 if self.active else 0); p.drawEllipse(38-radius,38-radius,2*radius,2*radius)
+            p.setBrush(Qt.NoBrush); p.setPen(QPen(c,1))
+            for i in range(12):
+                p.save(); p.translate(38,38); p.rotate(i*30); p.drawLine(0,-34,0,-30); p.restore()
+
+    class ActivityGraph(QWidget):
+        def __init__(self,parent=None):
+            super().__init__(parent);self.active=False;self.phase=0;self.setFixedHeight(138)
+            self.timer=QTimer(self);self.timer.timeout.connect(self.advance);self.timer.start(120)
+        def advance(self):
+            if self.active:self.phase+=1;self.update()
+        def paintEvent(self,event):
+            p=QPainter(self);p.fillRect(self.rect(),QColor('#172021'))
+            p.setPen(QPen(QColor('#29463f'),1))
+            for x in range(0,self.width(),48):p.drawLine(x,0,x,self.height())
+            for y in range(0,self.height(),24):p.drawLine(0,y,self.width(),y)
+            p.setRenderHint(QPainter.Antialiasing);p.setPen(QPen(QColor('#a4dfbd'),2.5))
+            middle=self.height()//2;last=None
+            for x in range(0,self.width()+6,6):
+                position=(x//18+self.phase)%34
+                spike={3:-16,4:19,5:-44,6:47,7:-23,8:14,13:-30,14:32,15:-55,16:58,17:-19,18:15,23:-23,24:30,25:-49,26:45,27:-18}.get(position,0) if self.active else 0
+                current=(x,middle+spike)
+                if last:p.drawLine(last[0],last[1],current[0],current[1])
+                last=current
+
+    class Task(QObject):
+        chunk=Signal(str); done=Signal(object); failed=Signal(str)
+        def __init__(self, action):
+            super().__init__(); self.action=action
+        def run(self):
+            try: self.done.emit(self.action(self.chunk.emit))
+            except Exception as error: self.failed.emit(str(error))
+
+    class Window(QMainWindow):
+        def __init__(self):
+            super().__init__(); self.lab=None; self.busy=False; self.closing=False
+            self.last_error=None
+            self.shutdown_requested=threading.Event()
+            self.thread=None; self.task=None; self.last_speed=None; self.last_time=None
+            self.setWindowTitle('GIZMO // CENTRAL INTELLIGENCE CORE'); self.resize(850,960)
+            self.setMinimumSize(800,820)
+            self.setStyleSheet('''
+                QMainWindow,QWidget#central {background:#222a2b}
+                QWidget {color:#c5d9d1;font-family:Consolas,monospace;font-size:17px}
+                QLabel {background:transparent}
+                QFrame#panel {background:#1b2223;border:1px solid #3c5b53;border-radius:6px}
+                QLabel#dim {color:#91b3a8;font-size:14px}
+                QLabel#title {font-size:38px;font-weight:bold;letter-spacing:8px;color:#b9e4d1}
+                QLabel#value {font-size:21px;font-weight:bold;color:#afe2c2}
+                QPushButton {background:#2a4039;border:1px solid #53776b;border-radius:5px;padding:12px;color:#b9e4d1;font-size:16px}
+                QPushButton:hover {background:#36594a} QPushButton:disabled {color:#74847e;background:#27312e}
+                QPushButton#shutdown {background:#49312f;border-color:#80514d;color:#f0b4aa}
+                QLineEdit,QTextEdit,QComboBox,QSpinBox,QDoubleSpinBox,QTableWidget {background:#151d1e;color:#c4dfd2;border:1px solid #456158;padding:6px;selection-background-color:#376251}
+                QHeaderView::section {background:#2b3d39;color:#b4dbc5;padding:5px;border:0}
+                QTabWidget::pane {border:1px solid #456158} QTabBar::tab {background:#273a35;padding:9px}
+            ''')
+            outer=QWidget();outer.setObjectName('central');self.setCentralWidget(outer); root=QVBoxLayout(outer); root.setContentsMargins(24,22,24,18);root.setSpacing(12)
+            head=QHBoxLayout(); names=QVBoxLayout(); names.addWidget(self.label('GIZMO','title'))
+            names.addWidget(self.label('CENTRAL INTELLIGENCE CORE','dim'));names.addWidget(self.label('STROMSCHLAG SYSTEMS // REV 0.1','dim'))
+            head.addLayout(names);head.addStretch();self.pulse=Pulse();head.addWidget(self.pulse);root.addLayout(head)
+            self.pages=QStackedWidget();root.addWidget(self.pages,1)
+            self.home=QWidget();self.pages.addWidget(self.home);home=QVBoxLayout(self.home);home.setContentsMargins(0,8,0,0);home.setSpacing(11)
+            grid=QGridLayout();grid.setSpacing(8);self.indicators={}
+            for index,(key,title) in enumerate([('core','INTELLIGENCE CORE'),('ollama','OLLAMA'),('model','ACTIVE MODEL'),('memory','MEMORY ENGINE'),('c64','COMMODORE UPLINK'),('story','STORY DIRECTOR')]):
+                box=self.panel();lay=QVBoxLayout(box);lay.addWidget(self.label(title,'dim'));value=self.label('OFFLINE','value');lay.addWidget(value)
+                self.indicators[key]=value;grid.addWidget(box,index//2,index%2)
+            home.addLayout(grid)
+            monitor=self.panel();ml=QVBoxLayout(monitor);top=QHBoxLayout();top.addWidget(self.label('NEURAL ACTIVITY MONITOR','dim'));top.addStretch()
+            self.activity=self.label('IDLE','dim');top.addWidget(self.activity);ml.addLayout(top)
+            self.graph=ActivityGraph();ml.addWidget(self.graph)
+            metrics=QGridLayout();self.metrics={}
+            for index,(key,title) in enumerate([('gpu','GPU LOAD'),('vram','VRAM'),('speed','INFERENCE'),('latency','RESPONSE'),('memories','MEMORIES'),('jobs','PENDING ANALYSES')]):
+                metrics.addWidget(self.label(title,'dim'),0,index%3) if index<3 else metrics.addWidget(self.label(title,'dim'),2,index%3)
+                item=self.label('—','value');self.metrics[key]=item;metrics.addWidget(item,1 if index<3 else 3,index%3)
+            ml.addLayout(metrics);home.addWidget(monitor)
+            self.log=QTextEdit();self.log.setReadOnly(True);self.log.setMinimumHeight(112);self.log.setMaximumHeight(136);home.addWidget(self.log)
+            nav=QHBoxLayout()
+            for name,action in [('MODEL LAB',self.open_model),('SETTINGS',self.open_settings),('ARCHIVE',self.open_archive)]:
+                button=QPushButton(name);button.clicked.connect(action);nav.addWidget(button)
+            home.addLayout(nav)
+            actions=QHBoxLayout();self.start_button=QPushButton('◉  START CORE');self.start_button.clicked.connect(self.start_core)
+            self.stop_button=QPushButton('⏻  SHUTDOWN');self.stop_button.setObjectName('shutdown');self.stop_button.clicked.connect(self.shutdown)
+            actions.addWidget(self.start_button);actions.addWidget(self.stop_button);home.addLayout(actions)
+            home.addWidget(self.label('GIZMO CONTROL CENTER // REV 0.1','dim'));home.addStretch(1)
+            self.build_model_page();self.build_settings_page();self.build_archive_page()
+            self.gpu_process=QProcess(self);self.gpu_process.finished.connect(self.gpu_finished)
+            self.api_manager=QNetworkAccessManager(self);self.api_pending=False;self.external_ollama=False
+            self.api_timer=QTimer(self);self.api_timer.timeout.connect(self.check_ollama_api);self.api_timer.start(3000)
+            self.poller=QTimer(self);self.poller.timeout.connect(self.refresh_status);self.poller.start(1500)
+            self.log_line('CONTROL CENTER READY // CORE OFFLINE')
+            self.refresh_status()
+            self.check_ollama_api()
+        def label(self,text,role=None):
+            item=QLabel(text)
+            if role:item.setObjectName(role)
+            return item
+        def panel(self):
+            box=QFrame();box.setObjectName('panel');return box
+        def page(self,title):
+            page=QWidget();layout=QVBoxLayout(page);layout.setSpacing(10);header=QHBoxLayout();back=QPushButton('← CONTROL CENTER');back.clicked.connect(lambda:self.pages.setCurrentIndex(0));header.addWidget(back);header.addStretch();header.addWidget(self.label(title,'value'));layout.addLayout(header);self.pages.addWidget(page);return layout
+        def build_model_page(self):
+            layout=self.page('MODEL LAB');self.chat_view=QTextEdit();self.chat_view.setReadOnly(True);layout.addWidget(self.chat_view,1)
+            row=QHBoxLayout();self.model_select=QComboBox();self.model_select.setEditable(True);self.model_select.addItem(DEFAULT_MODEL)
+            self.model_button=QPushButton('LOAD MODEL');self.model_button.clicked.connect(self.switch_model)
+            row.addWidget(self.model_select,1);row.addWidget(self.model_button);layout.addLayout(row)
+            row=QHBoxLayout();self.prompt=QLineEdit();self.prompt.setPlaceholderText('Speak to GIZMO…');self.prompt.returnPressed.connect(self.send)
+            self.send_button=QPushButton('SEND');self.send_button.clicked.connect(self.send);row.addWidget(self.prompt,1);row.addWidget(self.send_button);layout.addLayout(row)
+            self.chat_status=self.label('CORE OFFLINE','dim');layout.addWidget(self.chat_status)
+        def build_settings_page(self):
+            layout=self.page('SETTINGS');form=QFormLayout();self.settings_fields={}
+            for key,minimum,maximum in [('temperature',0,2),('top_p',0,1),('min_p',0,1),('repeat_penalty',0,3)]:
+                spin=QDoubleSpinBox();spin.setRange(minimum,maximum);spin.setDecimals(2);spin.setSingleStep(.05);self.settings_fields[key]=spin;form.addRow(key.upper(),spin)
+            for key,minimum,maximum in [('num_ctx',1024,65536),('num_predict',32,8192),('top_k',0,500),('seed',0,2147483647)]:
+                spin=QSpinBox();spin.setRange(minimum,maximum);self.settings_fields[key]=spin;form.addRow(key.upper(),spin)
+            self.settings_fields['seed'].setMinimum(-1)
+            self.settings_fields['seed'].setSpecialValueText('AUTO')
+            layout.addLayout(form);self.profile_path=self.label('Profile: default','dim');layout.addWidget(self.profile_path)
+            profile_button=QPushButton('SELECT PERSONALITY FILE…');profile_button.clicked.connect(self.select_profile);layout.addWidget(profile_button)
+            save=QPushButton('SAVE SETTINGS');save.clicked.connect(self.save_settings);layout.addWidget(save);layout.addStretch()
+            layout.addWidget(self.label('Saved locally. Changes to model parameters take effect on the next request.','dim'))
+        def build_archive_page(self):
+            layout=self.page('ARCHIVE // LOCAL');tabs=QTabWidget();self.tables={}
+            for key,columns in [('memories',['ID','STATUS','DOMAIN','KEY','VALUE']),('entities',['ID','STATUS','KIND','NAME']),('relations',['ID','STATUS','SUBJECT','RELATION','TARGET']),('jobs',['ID','STATUS','ATTEMPTS','ERROR'])]:
+                table=QTableWidget(0,len(columns));table.setHorizontalHeaderLabels(columns);table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch);table.setEditTriggers(QTableWidget.NoEditTriggers)
+                tabs.addTab(table,key.upper());self.tables[key]=table
+            layout.addWidget(tabs,1);row=QHBoxLayout();refresh=QPushButton('REFRESH');refresh.clicked.connect(self.refresh_archive)
+            edit=QPushButton('CORRECT MEMORY');edit.clicked.connect(self.correct_memory)
+            delete=QPushButton('DELETE MEMORY');delete.setObjectName('shutdown');delete.clicked.connect(self.delete_memory)
+            approve=QPushButton('APPROVE RELATION');approve.clicked.connect(lambda:self.change_relation('active'))
+            remove_relation=QPushButton('DELETE RELATION');remove_relation.setObjectName('shutdown');remove_relation.clicked.connect(lambda:self.change_relation('deleted'))
+            row.addWidget(refresh);row.addWidget(edit);row.addWidget(delete);layout.addLayout(row)
+            relations_row=QHBoxLayout();relations_row.addWidget(approve);relations_row.addWidget(remove_relation);layout.addLayout(relations_row)
+            layout.addWidget(self.label('Deletion requires confirmation. The archive stays on this PC.','dim'))
+        def log_line(self,text):
+            self.log.append(datetime.now().strftime('%H:%M:%S')+'  '+text)
+        def set_busy(self,busy,activity='IDLE'):
+            self.busy=busy;self.activity.setText(activity);self.pulse.active=busy or bool(self.lab and self.lab.model);self.graph.active=busy
+            self.start_button.setEnabled(not busy and not self.lab);self.send_button.setEnabled(not busy and bool(self.lab and self.lab.model))
+            self.model_button.setEnabled(not busy and bool(self.lab));self.prompt.setEnabled(not busy and bool(self.lab and self.lab.model))
+            if busy or not self.last_error:self.chat_status.setText(activity)
+        def work(self,action,activity,on_done=None):
+            if self.busy:return
+            self.last_error=None
+            self.set_busy(True,activity);self.log_line(activity)
+            task=Task(action);thread=threading.Thread(target=task.run,daemon=True)
+            def finish(result):
+                self.log_line(activity+' // COMPLETE')
+                if on_done:on_done(result)
+                self.refresh_status()
+            def fail(error):
+                self.last_error=error
+                self.log_line('ERROR // '+error);self.chat_status.setText(error)
+                if not self.shutdown_requested.is_set() and not qa_report:QMessageBox.warning(self,'GIZMO',error)
+                self.refresh_status()
+            task.done.connect(finish);task.failed.connect(fail)
+            task.done.connect(lambda _result:self.on_task_finished(thread))
+            task.failed.connect(lambda _error:self.on_task_finished(thread))
+            self.thread=thread;self.task=task;thread.start()
+        def on_task_finished(self,thread):
+            if self.thread is thread:self.thread=None;self.task=None
+            if not self.closing:self.set_busy(False)
+            if self.shutdown_requested.is_set() and self.lab and not self.closing:
+                self.shutdown();return
+            if getattr(self,'close_after_shutdown',False) and self.lab and not self.closing:
+                self.shutdown();return
+            if getattr(self,'close_after_shutdown',False) and self.lab is None and not self.closing:
+                QTimer.singleShot(0,self.close)
+            elif self.lab is None and not self.closing:self.shutdown_requested.clear()
+        def start_core(self):
+            def action(_emit):
+                lab=Lab();self.lab=lab
+                try:
+                    if self.shutdown_requested.is_set():
+                        raise RuntimeError('Start abgebrochen')
+                    lab.start()
+                    with lab.request('/api/tags') as response:
+                        models=[item['name'] for item in json.load(response).get('models',[]) if item.get('name')]
+                    return {'active':lab.model,'installed':models}
+                except Exception:
+                    lab.stop();self.lab=None;raise
+            def done(result):
+                self.model_select.clear();self.model_select.addItems(result['installed'])
+                self.model_select.setCurrentText(result['active'])
+                self.log_line('MODEL READY // '+result['active'])
+            self.work(action,'INITIALIZING CORE',done)
+        def send(self):
+            prompt=self.prompt.text().strip()
+            if not prompt or not self.lab or self.busy:return
+            self.prompt.clear();self.chat_view.append('<span style="color:#e5c681">YOU &gt; '+self.escape(prompt)+'</span>')
+            self.chat_view.append('<span style="color:#a9dec0">GIZMO &gt; </span>')
+            def stream(chunk):self.chat_view.insertPlainText(chunk);self.chat_view.ensureCursorVisible()
+            def done(result):
+                self.chat_view.append('');self.last_speed=result['tokens_per_s'];self.last_time=result['total_s']
+                self.log_line(f"RESPONSE // {result['total_s']:.2f}s // {result['tokens_per_s']:.1f} t/s // {result['abort_reason']}")
+                if result['abort_reason']!='completed' and not self.shutdown_requested.is_set():
+                    self.last_error=result['abort_reason']
+                    self.chat_status.setText('GENERATION ERROR // '+result['abort_reason'])
+                    if not qa_report:QMessageBox.warning(self,'Generation failed',result['abort_reason'])
+            self.work(lambda emit:self.lab.chat(prompt,on_text=emit),'GENERATING RESPONSE',done)
+            self.task.chunk.connect(stream)
+        @staticmethod
+        def escape(value):
+            import html
+            return html.escape(value)
+        def switch_model(self):
+            if not self.lab:return
+            model=self.model_select.currentText().strip()
+            installed={self.model_select.itemText(index) for index in range(self.model_select.count())}
+            if model and model not in installed:
+                QMessageBox.warning(self,'Model not installed','Select an already installed model. No model will be downloaded.');return
+            if model:
+                def done(_result):
+                    try:self.persist_config(self.lab.config)
+                    except OSError as error:
+                        self.log_line('SETTINGS SAVE ERROR // '+str(error))
+                        QMessageBox.warning(self,'GIZMO','Model loaded, but the selection could not be saved: '+str(error))
+                    self.log_line('ACTIVE MODEL // '+model)
+                self.work(lambda _emit:self.lab.switch_model(model),'LOADING MODEL '+model,done)
+        def open_model(self):self.pages.setCurrentIndex(1)
+        def open_settings(self):
+            if self.lab:
+                for key,field in self.settings_fields.items():
+                    value=self.lab.config.get(key)
+                    number=-1 if key=='seed' and value is None else (value or 0)
+                    field.setValue(int(number) if isinstance(field,QSpinBox) else float(number))
+                self.profile_path.setText('Profile: '+self.lab.profile_sha256[:16]+'… (active)')
+            self.pages.setCurrentIndex(2)
+        def select_profile(self):
+            filename,_=QFileDialog.getOpenFileName(self,'Select local personality profile','','Text files (*.txt);;All files (*)')
+            if filename:self.selected_profile=filename;self.profile_path.setText('Selected: '+Path(filename).name)
+        def save_settings(self):
+            if not self.lab:
+                QMessageBox.information(self,'GIZMO','Start the core before changing settings.');return
+            if self.busy:return
+            config=dict(self.lab.config)
+            for key,field in self.settings_fields.items():config[key]=None if key=='seed' and field.value()==-1 else field.value()
+            if getattr(self,'selected_profile',None):
+                if QMessageBox.question(self,'Confirm profile change','Replace the active local personality profile with the selected file?')!=QMessageBox.Yes:return
+                source=Path(self.selected_profile);content=source.read_text(encoding='utf-8')
+                target=self.lab.personality_path
+                if target.exists():
+                    import shutil
+                    shutil.copy2(target,target.with_name(target.name+'.'+datetime.now().strftime('%Y%m%d-%H%M%S')+'.bak'))
+                target.write_text(content,encoding='utf-8')
+                self.lab.personality=content.strip();self.lab.profile_sha256=hashlib.sha256(self.lab.personality.encode()).hexdigest()
+                self.selected_profile=None
+            self.persist_config(config)
+            self.lab.config=config;self.log_line('SETTINGS SAVED LOCALLY')
+        def persist_config(self,config):
+            config_path=self.lab.data/'config.json';temp=config_path.with_suffix('.tmp')
+            temp.write_text(json.dumps(config,indent=2,ensure_ascii=False),encoding='utf-8');os.replace(temp,config_path)
+        def open_archive(self):self.pages.setCurrentIndex(3);self.refresh_archive()
+        def refresh_archive(self):
+            if not self.lab or self.busy:return
+            memory=self.lab.memory
+            sets={'memories':[(r['id'],r['status'],r['domain'],r['key'],r['value']) for r in memory.db.execute('SELECT id,status,domain,key,value FROM memories ORDER BY id DESC LIMIT 500')],
+                'entities':[(r['id'],r['status'],r['kind'],r['name']) for r in memory.list_entities()],
+                'relations':[(r['id'],r['status'],r['subject'],r['predicate'],r['object'] or r['value']) for r in memory.list_relations()],
+                'jobs':[(r['id'],r['status'],r['attempts'],r['error'] or '') for r in memory.db.execute('SELECT id,status,attempts,error FROM analysis_jobs ORDER BY id DESC LIMIT 500')]}
+            for key,rows in sets.items():
+                table=self.tables[key];table.setRowCount(len(rows))
+                for i,row in enumerate(rows):
+                    for j,value in enumerate(row):table.setItem(i,j,QTableWidgetItem(str(value)))
+        def delete_memory(self):
+            if not self.lab or self.busy:return
+            table=self.tables['memories'];row=table.currentRow()
+            if row<0:return
+            ident=int(table.item(row,0).text())
+            if QMessageBox.question(self,'Confirm deletion',f'Delete memory #{ident}? This action will be recorded and cannot be undone automatically.')!=QMessageBox.Yes:return
+            self.lab.memory.delete(ident);self.refresh_archive();self.log_line(f'MEMORY #{ident} DELETED')
+        def correct_memory(self):
+            if not self.lab or self.busy:return
+            table=self.tables['memories'];row=table.currentRow()
+            if row<0:return
+            ident=int(table.item(row,0).text());old=table.item(row,4).text()
+            value,accepted=QInputDialog.getText(self,'Correct memory','Confirmed value:',text=old)
+            if not accepted or not value.strip() or value==old:return
+            if QMessageBox.question(self,'Confirm correction',f'Correct memory #{ident}? The previous value will be recorded.')!=QMessageBox.Yes:return
+            self.lab.memory.correct(ident,value.strip());self.refresh_archive();self.log_line(f'MEMORY #{ident} CORRECTED')
+        def change_relation(self,status):
+            if not self.lab or self.busy:return
+            table=self.tables['relations'];row=table.currentRow()
+            if row<0:return
+            ident=int(table.item(row,0).text())
+            if QMessageBox.question(self,'Confirm relation change',f'Set relation #{ident} to {status.upper()}?')!=QMessageBox.Yes:return
+            self.lab.memory.set_relation_status(ident,status);self.refresh_archive();self.log_line(f'RELATION #{ident} {status.upper()}')
+        def refresh_status(self):
+            active=bool(self.lab and self.lab.model and not self.lab.stop_event.is_set())
+            self.indicators['core'].setText('ONLINE' if active else ('STARTING' if self.busy and self.lab else 'OFFLINE'))
+            self.indicators['ollama'].setText('CONNECTED' if self.lab and self.lab.ollama_ready else ('AVAILABLE' if self.external_ollama else 'OFFLINE'))
+            self.indicators['model'].setText(self.lab.model if active else 'NOT LOADED')
+            self.indicators['memory'].setText('ACTIVE' if active else ('MOUNTED' if self.lab else 'OFFLINE'))
+            self.indicators['c64'].setText('NOT CONNECTED');self.indicators['story'].setText('NOT INSTALLED')
+            if active and not self.busy:
+                try:
+                    self.metrics['memories'].setText(str(self.lab.memory.db.execute("SELECT COUNT(*) FROM memories WHERE status='active'").fetchone()[0]))
+                    self.metrics['jobs'].setText(str(self.lab.memory.job_counts().get('pending',0)))
+                except Exception:self.metrics['memories'].setText('—');self.metrics['jobs'].setText('—')
+            else:
+                self.metrics['memories'].setText('—');self.metrics['jobs'].setText('—')
+            self.metrics['speed'].setText(f'{self.last_speed:.1f} t/s' if self.last_speed is not None else '—')
+            self.metrics['latency'].setText(f'{self.last_time:.2f} s' if self.last_time is not None else '—')
+            if self.gpu_process.state()==QProcess.NotRunning:
+                self.gpu_process.start('nvidia-smi',['--query-gpu=utilization.gpu,memory.used,memory.total','--format=csv,noheader,nounits'])
+            self.pulse.active=active or self.busy
+            self.graph.active=self.busy
+        def check_ollama_api(self):
+            if self.api_pending:return
+            self.api_pending=True
+            url=self.lab.config.get('ollama_url','http://127.0.0.1:11434') if self.lab else 'http://127.0.0.1:11434'
+            reply=self.api_manager.get(QNetworkRequest(QUrl(url.rstrip('/')+'/api/tags')))
+            def finished():
+                self.external_ollama=reply.error()==QNetworkReply.NoError
+                self.api_pending=False;reply.deleteLater()
+                if not self.lab:self.indicators['ollama'].setText('AVAILABLE' if self.external_ollama else 'OFFLINE')
+            reply.finished.connect(finished)
+        def gpu_finished(self,_exit_code,_status):
+            try:
+                output=bytes(self.gpu_process.readAllStandardOutput()).decode('utf-8')
+                values=[int(v.strip()) for v in output.splitlines()[0].split(',')]
+                self.metrics['gpu'].setText(f'{values[0]} %')
+                self.metrics['vram'].setText(f'{values[1]/1024:.1f} / {values[2]/1024:.1f} GB')
+            except (ValueError,IndexError):
+                self.metrics['gpu'].setText('—');self.metrics['vram'].setText('—')
+        def shutdown(self):
+            if self.closing:return
+            self.shutdown_requested.set()
+            self.closing=True;self.log_line('STUDIO-SAFE SHUTDOWN REQUESTED');self.activity.setText('SHUTTING DOWN')
+            stopped={'value':False}
+            def terminate():
+                if self.lab:self.lab.stop()
+                listing=subprocess.run(['tasklist','/FO','CSV','/NH'],capture_output=True,text=True,timeout=10)
+                stopped['value']=not any('ollama' in line.lower() for line in listing.stdout.splitlines())
+            def end():
+                self.lab=None;self.closing=False;self.last_error=None;self.set_busy(False,'IDLE');self.refresh_status()
+                self.log_line('OLLAMA STOPPED // CORE OFFLINE' if stopped['value'] else 'WARNING // OLLAMA STILL RUNNING')
+                if getattr(self,'log_shutdown_error',None):self.log_line('SHUTDOWN ERROR // '+self.log_shutdown_error)
+                if not self.close_after_shutdown and not (self.thread and self.thread.is_alive()):self.shutdown_requested.clear()
+                if self.close_after_shutdown and not (self.thread and self.thread.is_alive()):QTimer.singleShot(0,self.close)
+            self.close_after_shutdown=getattr(self,'close_after_shutdown',False)
+            def stop_async():
+                try:terminate()
+                except Exception as error:self.log_shutdown_error=str(error)
+                finally:QTimer.singleShot(0,self,end)
+            threading.Thread(target=stop_async,daemon=True).start()
+        def closeEvent(self,event):
+            if self.lab:
+                event.ignore();self.close_after_shutdown=True;self.shutdown();return
+            if self.busy or self.closing:
+                event.ignore();self.close_after_shutdown=True;return
+            if self.gpu_process.state()!=QProcess.NotRunning:self.gpu_process.kill()
+            event.accept()
+
+    app=QApplication(sys.argv);app.setApplicationName('GIZMO Control Center')
+    window=Window();window.show()
+    if qa_report:
+        report={'started_at':utc_now(),'checks':{},'error':None,'stream_chunks':0}
+        state={'phase':'start','at':time.monotonic(),'first_answer':None,'busy_ticks':0}
+        progress=Path(qa_report).with_suffix('.progress.json')
+        progress.parent.mkdir(parents=True,exist_ok=True)
+        def finish_qa():
+            report['ended_at']=utc_now()
+            report['checks']['ollama_stopped']=not any('ollama' in line.lower() for line in subprocess.run(
+                ['tasklist','/FO','CSV','/NH'],capture_output=True,text=True,timeout=10).stdout.splitlines())
+            try:
+                with urllib.request.urlopen('http://127.0.0.1:11434/api/tags',timeout=1):
+                    report['checks']['api_offline']=False
+            except OSError:report['checks']['api_offline']=True
+            gpu=subprocess.run(['nvidia-smi','--query-gpu=memory.used,memory.total','--format=csv,noheader,nounits'],capture_output=True,text=True,timeout=5)
+            report['gpu_after']=gpu.stdout.strip() if gpu.returncode==0 else None
+            path=Path(qa_report);path.parent.mkdir(parents=True,exist_ok=True)
+            path.write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
+            app.exit(0 if report['error'] is None and all(report['checks'].values()) else 1)
+        def tick_body():
+            phase=state['phase']
+            progress.write_text(json.dumps({'phase':phase,'busy':window.busy,'core':bool(window.lab),'checks':report['checks']},ensure_ascii=False),encoding='utf-8')
+            if window.busy:state['busy_ticks']+=1
+            if time.monotonic()-state['at']>180:
+                report['error']='Timeout in '+phase
+                state['phase']='shutdown';window.shutdown();state['at']=time.monotonic();return
+            if phase=='start':
+                window.start_core();state['phase']='loading';state['at']=time.monotonic()
+            elif phase=='loading' and not window.busy:
+                if not window.lab or not window.lab.model:
+                    report['error']='Core did not load: '+str(window.last_error);state['phase']='shutdown';window.shutdown();return
+                report['checks']['real_model_loaded']=window.lab.model==DEFAULT_MODEL
+                report['checks']['ui_responsive']=window.isVisible() and window.pulse.timer.isActive() and state['busy_ticks']>=2
+                report['checks']['real_status']=window.indicators['model'].text()==DEFAULT_MODEL
+                window.open_settings();report['checks']['settings_page']=window.pages.currentIndex()==2 and window.settings_fields['num_ctx'].value()>0
+                window.open_archive();report['checks']['archive_page']=window.pages.currentIndex()==3 and 'jobs' in window.tables
+                window.pages.setCurrentIndex(0)
+                if screenshot:window.grab().save(str(screenshot))
+                window.open_model();window.prompt.setText('My dog is Milo.');window.send()
+                window.task.chunk.connect(lambda _text:report.__setitem__('stream_chunks',report['stream_chunks']+1))
+                state['phase']='first';state['at']=time.monotonic()
+            elif phase=='first' and not window.busy:
+                state['first_answer']=window.chat_view.toPlainText()
+                report['checks']['streaming']=report['stream_chunks']>1
+                report['checks']['first_response']='GIZMO >' in state['first_answer']
+                state['phase']='analysis';state['at']=time.monotonic()
+            elif phase=='analysis':
+                counts=window.lab.memory.job_counts()
+                if counts.get('pending',0)==0 and counts.get('processing',0)==0:
+                    report['checks']['memory_processing']=counts.get('done',0)>0
+                    window.prompt.setText("What's my dog's name?");window.send()
+                    state['phase']='recall';state['at']=time.monotonic()
+            elif phase=='recall' and not window.busy:
+                answer=window.chat_view.toPlainText()[len(state['first_answer']):]
+                report['answer']=answer[-500:]
+                report['checks']['gemma_memory_recall']='milo' in answer.lower()
+                window.prompt.setText('Write a long technical essay about vacuum tube computers, at least 1000 words.');window.send()
+                state['phase']='interrupt';state['at']=time.monotonic()
+            elif phase=='interrupt' and window.busy and time.monotonic()-state['at']>.7:
+                report['checks']['shutdown_during_generation']=True
+                state['phase']='shutdown';state['at']=time.monotonic();window.shutdown()
+            elif phase=='interrupt' and not window.busy:
+                report['checks']['shutdown_during_generation']=False
+                state['phase']='shutdown';state['at']=time.monotonic();window.shutdown()
+            elif phase=='shutdown' and not window.closing and window.lab is None and not (window.thread and window.thread.is_alive()):
+                finish_qa()
+        def tick():
+            try:tick_body()
+            except Exception as error:
+                report['error']=repr(error)
+                progress.write_text(json.dumps({'phase':state['phase'],'error':repr(error)},ensure_ascii=False),encoding='utf-8')
+                if state['phase']!='shutdown':
+                    state['phase']='shutdown';state['at']=time.monotonic();window.shutdown()
+                else:finish_qa()
+        timer=QTimer(window);timer.timeout.connect(tick);timer.start(250)
+        QTimer.singleShot(100,tick)
+    elif screenshot:
+        path=Path(screenshot);path.parent.mkdir(parents=True,exist_ok=True)
+        QTimer.singleShot(700,lambda:window.grab().save(str(path)))
+        QTimer.singleShot(1100,app.quit)
+    return app.exec()
+
+
 def main():
     parser = argparse.ArgumentParser(description='GIZMO LAB')
+    parser.add_argument('--gui',action='store_true',help='Grafisches Control Center')
+    parser.add_argument('--screenshot',type=Path,help=argparse.SUPPRESS)
+    parser.add_argument('--gui-qa-report',type=Path,help=argparse.SUPPRESS)
     parser.add_argument('--benchmark', action='store_true')
     parser.add_argument('--variants', type=Path, help='JSON-Datei mit Modell- und Parametersätzen')
     parser.add_argument('--personality', type=Path, help='UTF-8-Profil, für alle Varianten identisch')
     parser.add_argument('--debug', action='store_true', help='Gesendete Nachrichten und Erinnerungsabruf anzeigen')
     args = parser.parse_args()
+    if args.gui:
+        return run_gui(args.screenshot,args.gui_qa_report)
     lab = Lab(personality_file=args.personality)
     def stop_signal(_signal, _frame):
         lab.stop()

@@ -58,6 +58,11 @@ class DeploymentTest(unittest.TestCase):
                 self.assertEqual(deploy.launch(root,[]),0)
                 self.assertEqual(call.call_args.kwargs['env']['GIZMO_LAB_DATA'],str(data.resolve()))
             settings=json.loads((root/'installation.json').read_text())
+            self.assertIn('pythonw.exe',(base/'GIZMO.cmd').read_text(encoding='utf-8'))
+            self.assertIn('--terminal',(base/'GIZMO-Terminal.cmd').read_text(encoding='utf-8'))
+            with patch.object(deploy.subprocess,'call',return_value=0) as call:
+                deploy.launch(root,['--terminal'])
+                self.assertNotIn('--gui',call.call_args.args[0])
             settings['data_directory']=None
             deploy.atomic_json(root/'installation.json',settings)
             with patch.object(deploy.os,'environ',dict(os.environ,GIZMO_LAB_DATA='synthetic-development-data')),patch.object(deploy.subprocess,'call',return_value=0) as call:

@@ -141,6 +141,7 @@ def update(root):
                     raise RuntimeError('Release-Datei unerwartet groß')
                 (source/name).write_bytes(bundle.read(info))
         version=activate(root,source,revision,expected_version=tag.removeprefix('lab-v'))
+    refresh_launchers(root)
     print(f'[+] LAB {version} installiert. Persönliche Dateien bleiben unverändert.',flush=True)
     return True
 
@@ -160,8 +161,16 @@ def launch(root, arguments):
     if os.name=='nt':
         signals.append(signal.SIGBREAK)
     previous={number:signal.signal(number,lambda *_:None) for number in signals}
+    local_python=root.parent/'.venv'/'Scripts'/'python.exe'
+    python=str(local_python) if os.name=='nt' and local_python.is_file() else settings['python']
     try:
-        return subprocess.call([settings['python'],str(release/'gizmo_lab.py'),*arguments],cwd=release,env=env)
+        if '--terminal' in arguments:
+            arguments=[value for value in arguments if value!='--terminal']
+            return subprocess.call([python,str(release/'gizmo_lab.py'),*arguments],cwd=release,env=env)
+        if os.name=='nt':
+            return subprocess.call([python,str(release/'gizmo_lab.py'),'--gui',*arguments],cwd=release,env=env,
+                                   creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+        return subprocess.call([python,str(release/'gizmo_lab.py'),'--gui',*arguments],cwd=release,env=env)
     finally:
         for number,handler in previous.items():
             signal.signal(number,handler)
@@ -178,6 +187,24 @@ runpy.run_path(str(release/'deployment.py'),run_name='__main__')
 '''
 
 
+def refresh_launchers(root):
+    """Keep the public starters stable across versioned code updates."""
+    settings=json.loads((root/'installation.json').read_text(encoding='utf-8'))
+    python=settings['python']
+    local=root.parent/'.venv'/'Scripts'/'python.exe'
+    if os.name=='nt' and local.is_file():
+        python=str(local)
+    pythonw=str(Path(python).with_name('pythonw.exe'))
+    launcher=str(root/'launcher.py')
+    files={
+        'GIZMO.cmd':f'@echo off\r\nstart "" "{pythonw}" "{launcher}" start %*\r\n',
+        'GIZMO-Terminal.cmd':f'@echo off\r\n"{python}" "{launcher}" start --terminal %*\r\nif errorlevel 1 pause\r\n',
+        'GIZMO-Update.cmd':f'@echo off\r\n"{python}" "{launcher}" update %*\r\nif errorlevel 1 pause\r\n',
+    }
+    for name,content in files.items():
+        (root.parent/name).write_text(content,encoding='utf-8')
+
+
 def install(root, source, git, data_directory=None, revision=None):
     if (root/'installation.json').exists():
         raise RuntimeError('Installation existiert bereits; bitte den Update-Starter verwenden.')
@@ -187,13 +214,14 @@ def install(root, source, git, data_directory=None, revision=None):
     python=str(Path(getattr(sys,'_base_executable',sys.executable)).resolve())
     atomic_json(root/'installation.json',{'git':git,'python':python,'data_directory':str(Path(data_directory).resolve()) if data_directory else None})
     (root/'launcher.py').write_text(BOOTSTRAP,encoding='utf-8')
-    for name,action in [('GIZMO.cmd','start'),('GIZMO-Update.cmd','update')]:
-        text='@echo off\nsetlocal\n"'+python+'" "'+str(root/'launcher.py')+'" '+action+' %*\nif errorlevel 1 pause\n'
-        (root.parent/name).write_text(text,encoding='utf-8')
+    refresh_launchers(root)
     print(f'[+] LAB {version} installiert. Start: {root.parent / "GIZMO.cmd"}',flush=True)
 
 
 def main():
+    diagnostic=os.environ.get('GIZMO_GUI_LOG',os.devnull)
+    if sys.stdout is None: sys.stdout=open(diagnostic,'a',encoding='utf-8')
+    if sys.stderr is None: sys.stderr=open(diagnostic,'a',encoding='utf-8')
     parser=argparse.ArgumentParser(description='GIZMO LAB – lokale Installation und sichere Code-Updates')
     parser.add_argument('action',choices=('install','start','update'))
     parser.add_argument('--root',type=Path,required=True)

@@ -1,10 +1,14 @@
-# GIZMO LAB 0.3.2 – Active Memory
+# GIZMO Control Center 0.1 // LAB 0.4.0
+
+Die Windows-Anwendung startet mit `GIZMO.cmd` als grafische technische Schaltzentrale. Das dunkle Instrumentenlayout orientiert sich an der bereitgestellten Designvorlage. Angezeigte Zustände und Zahlen stammen aus der laufenden LAB-Engine, SQLite und `nvidia-smi`; nicht verbundene C64-/Story-Komponenten werden ausdrücklich markiert. START CORE lädt das vorhandene Modell, MODEL LAB bietet Streaming-Dialog und Modellwechsel, SETTINGS speichert Parameter und ein ausdrücklich gewähltes Profil lokal, ARCHIVE zeigt Erinnerungen, Entitäten, Beziehungen und Jobs. Löschungen und Korrekturen erfordern Bestätigung. SHUTDOWN und Fensterschließen führen die Studio-Safe-Abschaltung aus. `GIZMO-Terminal.cmd` hält den bisherigen Diagnosemodus bereit.
+
+PySide6 6.12.0 wird ausschließlich in `.venv` installiert (`.venv/Scripts/python.exe -m pip install PySide6==6.12.0`). Der Versions-Updater übernimmt weiterhin nur freigegebene Laufzeitdateien. Die Qt-Oberfläche liegt aus Kompatibilitätsgründen im bestehenden `gizmo_lab.py`; Engine und Oberfläche bleiben als getrennte Klassen/Funktionen organisiert. Es gibt keinen zusätzlichen Modellaufruf für Statusanzeigen.
 
 Lokale Windows-Dialogumgebung mit Ollama und SQLite/FTS5. Bestätigte persönliche Informationen und zusammengehörige Personen-/Haustierbeziehungen werden aktiv abgerufen. C64-Client und produktive Brücke bleiben unverändert. Keine Cloud-Modellaufrufe, zusätzlichen Modelle, Dienste oder Autostarts.
 
 ## Alltag und Updates
 
-Die bestehende Installation mit `GIZMO.cmd` starten. Veröffentlichte LAB-Tags werden automatisch geprüft; offline startet die vorhandene Version. `GIZMO-Update.cmd` aktualisiert ausschließlich Programmdateien, ohne private Dateien zu öffnen. `/quit` und Strg+C beenden LAB und sämtliche Ollama-Prozesse. Kein manuelles ZIP-Entpacken oder BAT-Bearbeiten. [Installation, Sicherungen und lokale QA](LOCAL-DEVELOPMENT.md).
+Die bestehende Installation mit `GIZMO.cmd` starten. Veröffentlichte LAB-Tags werden automatisch geprüft; offline startet die vorhandene Version. `GIZMO-Update.cmd` aktualisiert ausschließlich Programmdateien, ohne private Dateien zu öffnen. `GIZMO-Terminal.cmd` bietet `/quit` und den bisherigen Konsolenbetrieb. Kein manuelles ZIP-Entpacken oder BAT-Bearbeiten. [Installation, Sicherungen und lokale QA](LOCAL-DEVELOPMENT.md).
 
 Profil, config.json und memory.sqlite3 bleiben am bisherigen Datenort (standardmäßig LOCALAPPDATA/GizmoLab). Das öffentliche personality.example.txt dient nur als Fallback. Das englische Testprofil ändert keine produktive Persönlichkeit. Vorhandene Konfigurationswerte bleiben erhalten; fehlende Schlüssel erhalten Laufzeit-Standardwerte.
 
@@ -23,6 +27,8 @@ Nach Antworten analysiert dasselbe lokale Modell Benutzeraussagen im Hintergrund
 `/reanalyze` verarbeitet auch erledigte Archivaufträge erneut. Identische Objekt-/Wertdarstellungen werden zusammengeführt; zusätzliche Quellen bleiben erhalten. Gelöschte und manuell überholte Angaben werden nicht automatisch wiederhergestellt. `/retry-analysis` reiht Fehler erneut ein. `/memory`, `/entities`, `/relations`, `/memstatus`, `/correct ID WERT`, `/delete ID`, `/approve-relation ID`, `/delete-relation ID`, `/backup DATEI.sqlite3` und `/export DATEI.json` bleiben verfügbar.
 
 ## Lokale Abnahme
+
+Die grafische Abnahme öffnet eine eigens installierte Testkopie per `pythonw`, lädt Gemma, prüft echte Streaming- und Erinnerungsantworten sowie den Abbruch während einer Generierung. Der tatsächliche Fenster-Screenshot und ein JSON-Bericht bleiben unter `.local-test/qa`.
 
 ```powershell
 .venv/Scripts/python.exe gizmo_lab/qa_local.py

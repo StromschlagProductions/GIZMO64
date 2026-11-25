@@ -125,7 +125,7 @@ def installed_launcher_check(folder):
     process=None
     report={'passed':False}
     try:
-        process=subprocess.Popen([sys.executable,str(root/'launcher.py'),'start','--offline'],
+        process=subprocess.Popen([sys.executable,str(root/'launcher.py'),'start','--offline','--terminal'],
                                  stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,encoding='utf-8')
         output,_=process.communicate('/quit\n',timeout=120)
         (folder/'installed-launcher.txt').write_text(output,encoding='utf-8')
@@ -146,6 +146,42 @@ def installed_launcher_check(folder):
         report['ollama_processes_after']=ollama_process_count()
         (folder/'installed-launcher.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
     assert report['passed'] and report['ollama_processes_after']==0,report
+
+
+def control_center_check(folder):
+    """Exercise the real Qt event loop, Gemma streaming, memory and Studio-Safe."""
+    import deployment
+    destination=folder/'control-center'
+    destination.mkdir()
+    root=destination/'installation'
+    git=shutil.which('git') or str(ROOT.parent/'.local-tools/git/cmd/git.exe')
+    deployment.install(root,ROOT,git,destination/'synthetic-data')
+    settings=json.loads((root/'installation.json').read_text(encoding='utf-8'))
+    settings['python']=sys.executable
+    deployment.atomic_json(root/'installation.json',settings)
+    deployment.refresh_launchers(root)
+    environment=dict(os.environ,GIZMO_GUI_LOG=str(destination/'pythonw-debug.log'))
+    report=destination/'report.json'
+    screenshot=destination/'control-center.png'
+    process=None
+    try:
+        pythonw=str(Path(sys.executable).with_name('pythonw.exe'))
+        process=subprocess.Popen([pythonw,str(root/'launcher.py'),'start','--offline',
+            '--gui-qa-report',str(report),'--screenshot',str(screenshot)],
+            env=environment,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,encoding='utf-8')
+        output,_=process.communicate(timeout=240)
+        (destination/'console.txt').write_text(output,encoding='utf-8')
+        assert process.returncode==0,output
+        evidence=json.loads(report.read_text(encoding='utf-8'))
+        assert evidence['error'] is None and all(evidence['checks'].values()),evidence
+        assert screenshot.is_file()
+    finally:
+        if process and process.poll() is None:
+            subprocess.run(['taskkill','/F','/T','/PID',str(process.pid)],capture_output=True,timeout=15)
+        if ollama_process_count():
+            for image in ('ollama app.exe','ollama.exe','ollama_llama_server.exe'):
+                subprocess.run(['taskkill','/F','/T','/IM',image],capture_output=True,timeout=15)
+        assert ollama_process_count()==0,'Ollama nach Qt-QA nicht vollständig beendet'
 
 
 def main():
@@ -176,6 +212,7 @@ def main():
             from active_memory_qa import run as active_memory_acceptance
             active_memory_acceptance(folder)
             installed_launcher_check(folder)
+            control_center_check(folder)
         print(f'[+] Lokale QA bestanden. Synthetische Berichte: {folder}',flush=True)
         return 0
     except (Exception,KeyboardInterrupt) as error:

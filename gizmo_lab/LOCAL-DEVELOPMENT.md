@@ -1,10 +1,12 @@
-# LAB 0.3.2 – lokaler Entwicklungs- und Produktivbetrieb
+# GIZMO Control Center 0.1 – lokaler Entwicklungs- und Produktivbetrieb
 
 PC-seitige Entwicklung und reale Modelltests erfolgen lokal unter Windows. Der C64-Client und die produktive Brücke gehören nicht zu diesem Update.
 
 ## Alltag
 
-Nach der einmaligen Installation `GIZMO.cmd` im Projektordner doppelklicken. Der Starter prüft veröffentlichte `lab-vX.Y.Z`-Tags, installiert bei Bedarf ausschließlich Programmdateien und startet LAB. Bei fehlender Internetverbindung startet die installierte Version. `/quit` beendet LAB und sämtliche Ollama-Prozesse. Es gibt keinen Dienst, Autostart oder automatischen Modelldownload.
+Nach der einmaligen Installation `GIZMO.cmd` im Projektordner doppelklicken. Der Starter prüft veröffentlichte `lab-vX.Y.Z`-Tags, installiert bei Bedarf ausschließlich Programmdateien und startet die grafische Oberfläche ohne dauerhaftes Konsolenfenster. Bei fehlender Internetverbindung startet die installierte Version. SHUTDOWN oder Fensterschließen beendet LAB und sämtliche Ollama-Prozesse. `GIZMO-Terminal.cmd` erhält den bisherigen Terminalmodus; dort beendet `/quit` LAB. Es gibt keinen Dienst, Autostart oder automatischen Modelldownload.
+
+PySide6 liegt projektlokal in `.venv` und wird mit `.venv/Scripts/python.exe -m pip install PySide6==6.12.0` installiert. Beim Upgrade auf Control Center 0.1 wird der grafische Starter erneuert. Der 0.3.2-Updater kann die neue Version mit seinem bisherigen Dateikatalog übernehmen, weil die Qt-Oberfläche in einer bereits ausgelieferten Laufzeitdatei liegt. Der Updater öffnet keine persönlichen Daten.
 
 `GIZMO-Update.cmd` aktualisiert ausschließlich den Code, ohne LAB oder Ollama zu starten. Während LAB läuft, verhindert eine Installationssperre Updates und einen zweiten produktiven Start. Vorher LAB mit `/quit` schließen. `GIZMO.cmd --offline` überspringt die Updateprüfung. Die bisherigen Codeversionen bleiben erhalten; die Aktivierung erfolgt über einen atomaren Versionszeiger. Ein fehlgeschlagenes Download- oder Validierungsverfahren ersetzt die funktionierende Version nicht. Keine automatischen Datenbank-Downgrades oder Rücksicherungen.
 
@@ -29,11 +31,13 @@ LAB 0.3.2 verwendet Schema 5 mit Such-, Quellen- und Normalisierungsmetadaten. B
 .venv/Scripts/python.exe gizmo_lab/qa_local.py --real-gemma
 ```
 
-Alternativ `gizmo_lab/run-local-qa.cmd` doppelklicken. Ein QA-Lauf legt immer einen neuen Ordner unter `.local-test/qa` an, erzwingt eigene Daten- und Temporärpfade und verwendet ausschließlich das neutrale Repository-Profil. Er öffnet keine privaten Erinnerungen oder Konfigurationen. Ohne Flag werden nur automatisierte Tests ausgeführt. Der reale Windows-Test startet die vorhandene Ollama-Installation, nutzt ausschließlich das bereits installierte `gemma4:12b` und beendet anschließend sämtliche Ollama-Prozesse. Kein Cloud-Fallback. Kein Modell wird heruntergeladen.
+Alternativ `gizmo_lab/run-local-qa.cmd` doppelklicken. Ein QA-Lauf legt immer einen neuen Ordner unter `.local-test/qa` an, erzwingt eigene Daten- und Temporärpfade und verwendet ausschließlich synthetische Repository-Profile. Er öffnet keine privaten Erinnerungen oder Konfigurationen. Ohne Flag werden nur automatisierte Tests ausgeführt. Der reale Windows-Test startet die vorhandene Ollama-Installation, nutzt das bereits installierte `gemma4:12b` und für den Modellwechsel nur ein ebenfalls bereits vorhandenes Modell. Anschließend beendet er sämtliche Ollama-Prozesse. Kein Cloud-Fallback. Kein Modell wird heruntergeladen.
 
 Geprüft werden echte Chatgenerierung, Schwester-/Hundbeziehungen, Pronomenauflösung mit offenem Status, deutsche Hypothesen und Fiktion, erneute Verarbeitung eines synthetischen Fehlauftrags sowie API- und Prozessabschluss. Zusätzlich wird eine eigene synthetische Produktivinstallation über den ausgelieferten Starter geöffnet und mit `/quit` geschlossen; Testprofil und Testkonfiguration müssen unverändert bleiben. Antworten und Messdaten bleiben lokal in ignorierten QA-Verzeichnissen. Tests sind keine Garantie für beliebige Modellformulierungen; ein Fehler stoppt die Freigabe. Diese QA soll außerhalb der Codex-Sandbox laufen, falls lokale API-/Socketverbindungen dort blockiert sind. Nicht parallel zu einer produktiven Unterhaltung ausführen: Studio-Safe beendet alle Ollama-Prozesse.
 
 ## Veröffentlichung
+
+Die reale Qt-QA startet die Oberfläche mit synthetischem Datenordner, lädt Gemma, misst Streaming und GUI-Reaktionsfähigkeit, verarbeitet eine synthetische Erinnerung, bricht eine laufende Generierung kontrolliert ab und prüft danach, dass kein Ollama-Prozess verbleibt. Der Screenshot und das JSON-Protokoll bleiben unter `.local-test/qa/.../control-center/` und werden nicht veröffentlicht.
 
 1. Unit-Tests und reale lokale Gemma-QA ausführen; Änderungen und `git diff --check` prüfen.
 2. VERSION in version.py und Dokumentation aktualisieren. Bei neuer Analysekorrektur ANALYSIS_REVISION ändern; Schema nur bei tatsächlicher Strukturänderung erhöhen.
