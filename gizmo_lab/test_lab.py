@@ -10,7 +10,7 @@ class LabTest(unittest.TestCase):
         self.assertFalse(should_quit('Q'))
         self.assertFalse(should_quit('Warum?'))
         self.assertTrue(should_quit('/quit'))
-        self.assertEqual(DEFAULT_MODEL, 'richardyoung/qwen2.5-7b-instruct-abliterated:latest')
+        self.assertEqual(DEFAULT_MODEL, 'gemma4:12b')
     def test_stream_context_metrics_and_think_filter(self):
         seen=[]
         def open_request(req, timeout):

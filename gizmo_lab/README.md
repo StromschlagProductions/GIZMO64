@@ -1,12 +1,12 @@
-# GIZMO LAB 0.1
+# GIZMO LAB 0.2
 
 Lokale Windows-Terminalumgebung für Modell- und Persönlichkeitstests. Der C64-Client und die produktive Brücke werden nicht verwendet oder verändert. Die neutrale Persönlichkeit in `personality.example.txt` entspricht dem 0.2.1-Prompt.
 
 ## Start
 
-Python 3 und Ollama installieren. Das gewünschte Modell **vorher manuell** mit `ollama pull richardyoung/qwen2.5-7b-instruct-abliterated:latest` laden. `start-gizmo-lab.bat` ausführen. LAB startet Ollama und lädt das Modell vor. Freie deutsche Texte werden gestreamt. `/model NAME` wechselt das Modell. `/quit` und Strg+C beenden LAB. ESC und Q brechen während Modellladen, Generierung oder Benchmark ab. Während normaler Texteingabe ist `Q` ein gewöhnliches Zeichen; ESC beendet die Eingabe.
+Python 3 und Ollama installieren. Das bevorzugte Modell **vorher manuell** mit `ollama pull gemma4:12b` laden. `start-gizmo-lab.bat` ausführen. LAB startet Ollama und lädt das Modell vor. Freie deutsche Texte werden gestreamt. `/model NAME` wechselt das Modell. `/quit` und Strg+C beenden LAB. ESC und Q brechen während Modellladen, Generierung oder Benchmark ab. Während normaler Texteingabe ist `Q` ein gewöhnliches Zeichen; ESC beendet die Eingabe.
 
-Mit `--personality C:\Pfad\profil.txt` kann ein externes UTF-8-Profil für einen gesamten Testlauf gewählt werden. Der Benchmark protokolliert dessen SHA-256-Prüfsumme, sodass alle Modellvarianten nachweisbar dasselbe Profil verwenden. Persönliche Dateien liegen unter `%LOCALAPPDATA%\GizmoLab` (oder `GIZMO_LAB_DATA`). `config.example.json` dort als `config.json` und `personality.example.txt` als `personality.txt` kopieren. Nur diese lokalen Kopien bearbeiten. Berichte landen unter `reports`; sie werden nicht im öffentlichen Repository abgelegt. `keep_alive: -1` hält ein Modell geladen; beim Modellwechsel wird das alte Modell mit `keep_alive: 0` freigegeben. Keine Modelle werden automatisch heruntergeladen.
+Mit `--personality C:\Pfad\profil.txt` kann ein externes UTF-8-Profil für einen gesamten Testlauf gewählt werden. Der Benchmark protokolliert dessen SHA-256-Prüfsumme, sodass alle Modellvarianten nachweisbar dasselbe Profil verwenden. Das private Profil `GIZMO_Awakening_V2_EN.txt` kann in `%LOCALAPPDATA%\GizmoLab` liegen oder mit `--personality C:\Pfad\GIZMO_Awakening_V2_EN.txt` gewählt werden. Es wird nicht mitgeliefert. Ohne private Datei dient das neutrale Beispielprofil als Fallback. Persönliche Dateien liegen unter `%LOCALAPPDATA%\GizmoLab` (oder `GIZMO_LAB_DATA`). `config.example.json` dort als `config.json` und `personality.example.txt` als `personality.txt` kopieren. Nur diese lokalen Kopien bearbeiten. Berichte landen unter `reports`; sie werden nicht im öffentlichen Repository abgelegt. `keep_alive: -1` hält ein Modell geladen; beim Modellwechsel wird das alte Modell mit `keep_alive: 0` freigegeben. Keine Modelle werden automatisch heruntergeladen.
 
 ## Benchmark
 
@@ -26,3 +26,7 @@ Ollama ignoriert je nach Modell oder Version einige Optionen. API-Fehler erschei
 - `ModelAdapter.chat(messages, options)`: austauschbares Modellinterface.
 
 Diese Schnittstellen sind Entwurf; es wird noch kein Memory Core implementiert. SQLite und FTS5 reichen als geplante Basis ohne zusätzliche Infrastruktur.
+
+## Gedächtnis und Prüfung
+
+Das lokale SQLite/FTS5-Gedächtnis archiviert Gespräche und ruft bestätigte Fakten ab. `/memory`, `/correct ID WERT`, `/delete ID`, `/backup DATEI.sqlite3` und `/export DATEI.json` verwalten es. `--debug` zeigt Abruf, gesendete Nachrichten und Zeitmessungen; die Ausgabe enthält private Daten. [Architektur und Grenzen](MEMORY.md) sowie [manueller Windows-Testplan](WINDOWS-TESTPLAN.md) gehören zum Paket. Standard sind `num_ctx: 8192`, `working_messages: 20` und `memory_token_budget: 300`.

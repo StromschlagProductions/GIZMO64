@@ -14,3 +14,7 @@ gizmo_lab/personality.txt
 gizmo_lab/reports/
 gizmo_lab/*.db
 gizmo_lab/*.sqlite*
+*.sqlite3
+*.sqlite3-*
+*.db
+GIZMO_Awakening_V2_EN.txt

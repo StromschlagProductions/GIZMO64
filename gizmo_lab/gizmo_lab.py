@@ -12,9 +12,10 @@ import urllib.error
 import urllib.request
 from datetime import datetime
 from pathlib import Path
+from memory import Memory, utc_now
 
 ROOT = Path(__file__).resolve().parent
-DEFAULT_MODEL = 'richardyoung/qwen2.5-7b-instruct-abliterated:latest'
+DEFAULT_MODEL = 'gemma4:12b'
 OPTIONS = ('temperature', 'top_p', 'top_k', 'min_p', 'repeat_penalty', 'num_ctx', 'num_predict', 'seed')
 
 
@@ -41,7 +42,7 @@ class Lab:
     def __init__(self, config=None, data=None, opener=None, runner=None, personality_file=None):
         self.data = Path(data) if data else private_dir()
         self.config = config or load_config(self.data)
-        personality = Path(personality_file) if personality_file else self.data / 'personality.txt'
+        personality = Path(personality_file) if personality_file else (self.data / 'GIZMO_Awakening_V2_EN.txt' if (self.data / 'GIZMO_Awakening_V2_EN.txt').exists() else self.data / 'personality.txt')
         if personality_file and not personality.is_file():
             raise FileNotFoundError(f'Persoenlichkeitsprofil fehlt: {personality}')
         self.personality = (personality if personality.exists() else ROOT / 'personality.example.txt').read_text(encoding='utf-8').strip()
@@ -53,6 +54,11 @@ class Lab:
         self.process = None
         self.active_response = None
         self.context = []
+        self.memory = Memory(self.data / 'memory.sqlite3')
+        self.previous_message_at = self.memory.last_message_time()
+        self.session_started = utc_now()
+        self.conversation_id = self.memory.conversation(self.memory.latest_conversation())
+        self.last_diagnostics = {}
         self.model = None
         self.preload_s = None
 
@@ -137,8 +143,22 @@ class Lab:
     def chat(self, prompt, context=None, on_text=None, model=None):
         model = model or self.model or self.config.get('model', DEFAULT_MODEL)
         messages = [{'role': 'system', 'content': self.personality}]
-        messages += list(context if context is not None else self.context)[-20:]
+        retrieved = []
+        retrieval_s = 0
+        if context is None:
+            retrieved,retrieval_s = self.memory.retrieve(prompt, self.config.get('memory_token_budget', 300))
+            elapsed_since_previous = (datetime.fromisoformat(utc_now()) - datetime.fromisoformat(self.previous_message_at)).total_seconds() if self.previous_message_at else None
+            clock = f"Aktuelle UTC-Zeit: {utc_now()}. Sitzungsbeginn: {self.session_started}. Letzte Nachricht vor Sitzungsbeginn: {self.previous_message_at or 'keine'}. Vergangene Sekunden seitdem: {elapsed_since_previous if elapsed_since_previous is not None else 'unbekannt'}. Behaupte keine Aktivitaeten waehrend ausgeschalteter Sitzungen."
+            messages.append({'role':'system','content':clock})
+            if retrieved:
+                messages.append({'role':'system','content':'Bestaetigte lokale Erinnerungen (mit Herkunft; Fiktion nicht als Realitaet behandeln):\n'+'\n'.join(retrieved)})
+            messages += self.memory.recent(self.conversation_id, self.config.get('working_messages', 20))
+        else:
+            messages += list(context)[-self.config.get('working_messages', 20):]
         messages.append({'role': 'user', 'content': prompt})
+        self.last_diagnostics = {'messages':messages,'retrieved':retrieved,'retrieval_s':retrieval_s,
+                                 'context_chars':sum(len(message['content']) for message in messages)}
+        source_id = self.memory.add_message(self.conversation_id,'user',prompt) if context is None else None
         options = {key: self.config[key] for key in OPTIONS if self.config.get(key) is not None}
         payload = {'model': model, 'messages': messages, 'stream': True,
                    'keep_alive': self.config.get('keep_alive', -1), 'options': options,
@@ -204,11 +224,18 @@ class Lab:
             self.active_response = None
         elapsed = time.perf_counter() - started
         text = ''.join(output)
-        if context is None and aborted == 'completed':
-            self.context.extend([messages[-1], {'role': 'assistant', 'content': text}])
-            self.context = self.context[-20:]
+        extraction_s = 0
+        if context is None:
+            if text:
+                self.memory.add_message(self.conversation_id,'assistant',text)
+            extraction_started=time.perf_counter()
+            self.memory.extract_user(prompt,source_id)
+            extraction_s=time.perf_counter()-extraction_started
+            self.context = self.memory.recent(self.conversation_id,20)
+        self.last_diagnostics['extraction_s']=extraction_s
         speed = metrics.get('eval_count', 0) * 1e9 / metrics.get('eval_duration', 0) if metrics.get('eval_duration') else 0
         return {'model': model, 'options': options, 'personality_sha256': self.profile_sha256,
+                'memory_retrieval_s':retrieval_s,'memory_extraction_s':extraction_s,
                 'first_text_s': first, 'total_s': elapsed,
                 'prompt_tokens': metrics.get('prompt_eval_count'), 'generated_tokens': metrics.get('eval_count'),
                 'tokens_per_s': speed, 'abort_reason': aborted, 'answer': text,
@@ -256,6 +283,7 @@ class Lab:
                 except subprocess.TimeoutExpired:
                     self.process.kill()
             print('[+] GIZMO LAB beendet', flush=True)
+            self.memory.close()
 
 
 def run_benchmark(lab, questions, variants, destination):
@@ -311,6 +339,7 @@ def main():
     parser.add_argument('--benchmark', action='store_true')
     parser.add_argument('--variants', type=Path, help='JSON-Datei mit Modell- und Parametersätzen')
     parser.add_argument('--personality', type=Path, help='UTF-8-Profil, für alle Varianten identisch')
+    parser.add_argument('--debug', action='store_true', help='Gesendete Nachrichten und Erinnerungsabruf anzeigen')
     args = parser.parse_args()
     lab = Lab(personality_file=args.personality)
     def stop_signal(_signal, _frame):
@@ -345,7 +374,7 @@ def main():
             files = interruptible(lambda: run_benchmark(lab, questions, variants, lab.data / 'reports'))
             print(f'[+] Berichte: {files[0]} und {files[1]}')
         else:
-            print('[i] Freier Dialog. /quit beendet, /model NAME wechselt das Modell.')
+            print('[i] Freier Dialog. /quit beendet, /model NAME wechselt das Modell, /memory zeigt Erinnerungen.')
             while not lab.stop_event.is_set():
                 try:
                     prompt = input('Du > ')
@@ -356,11 +385,30 @@ def main():
                 if prompt.startswith('/model '):
                     interruptible(lambda: lab.switch_model(prompt[7:].strip()))
                     continue
+                if prompt.strip() == '/memory':
+                    for item in lab.memory.list_memories(include_pending=True):
+                        print(f"#{item['id']} {item['status']} {item['domain']} {item['key']}: {item['value']}")
+                    continue
+                if prompt.startswith('/correct '):
+                    ident, value = prompt[9:].split(' ', 1)
+                    lab.memory.correct(int(ident), value)
+                    continue
+                if prompt.startswith('/delete '):
+                    lab.memory.delete(int(prompt[8:]))
+                    continue
+                if prompt.startswith('/export '):
+                    print(lab.memory.export(lab.data / Path(prompt[8:].strip()).name))
+                    continue
+                if prompt.startswith('/backup '):
+                    print(lab.memory.backup(lab.data / Path(prompt[8:].strip()).name))
+                    continue
                 if not prompt.strip():
                     continue
                 print('GIZMO > ', end='', flush=True)
                 result = interruptible(lambda: lab.chat(prompt, on_text=lambda chunk: print(chunk, end='', flush=True)))
                 print(f"\n[i] {result['total_s']:.2f} s, {result['tokens_per_s']:.1f} Token/s, {result['abort_reason']}")
+                if args.debug:
+                    print(json.dumps(lab.last_diagnostics,ensure_ascii=False,indent=2))
     except (KeyboardInterrupt, OSError, RuntimeError) as error:
         if not isinstance(error, KeyboardInterrupt):
             print(f'[!] {error}', flush=True)
