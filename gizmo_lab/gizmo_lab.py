@@ -429,6 +429,13 @@ def main():
                 if prompt.strip() == '/retry-analysis':
                     print('[i] Fehlgeschlagene Analysen erneut eingereiht:',lab.memory.retry_failed())
                     continue
+                if prompt.strip() == '/analysis-errors':
+                    failed=lab.memory.failed_jobs()
+                    if not failed:
+                        print('[i] Keine fehlgeschlagenen Analyseauftraege.')
+                    for item in failed:
+                        print(f"Job #{item['id']} Nachricht #{item['message_id']} Versuche {item['attempts']}: {item['error']}")
+                    continue
                 if prompt.strip() == '/memstatus':
                     print('[i] Schema-Version:',lab.memory.db.execute('PRAGMA user_version').fetchone()[0],
                           'Auftraege:',lab.memory.job_counts(),

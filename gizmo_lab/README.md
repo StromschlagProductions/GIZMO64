@@ -1,4 +1,4 @@
-# GIZMO LAB 0.3
+# GIZMO LAB 0.3.1
 
 Lokale Windows-Terminalumgebung für Modell- und Persönlichkeitstests. Der C64-Client und die produktive Brücke werden nicht verwendet oder verändert. Die neutrale Persönlichkeit in `personality.example.txt` entspricht dem 0.2.1-Prompt.
 
@@ -34,3 +34,7 @@ Das lokale SQLite/FTS5-Gedächtnis archiviert Gespräche und ruft bestätigte Fa
 ## Intelligente Analyse 0.3
 
 Nach sichtbaren Antworten analysiert LAB Benutzernachrichten mit demselben lokalen Ollama-Modell. `/entities`, `/relations`, `/memstatus`, `/reanalyze` und `/retry-analysis` zeigen Entitäten, Beziehungen und die persistente Auftragswarteschlange. [Architektur, Validierung und Grenzen](ARCHITEKTUR-0.3.md) sowie der [Windows-Testplan 0.3](WINDOWS-TESTPLAN-0.3.md) erläutern die erste Entwicklungsstufe. Hypothesen, fiktionale Aussagen und Pronomenbezüge werden konservativ gekennzeichnet.
+
+## Analyse-Hotfix und Selbsttest
+
+`/analysis-errors` zeigt fehlgeschlagene Aufträge und Gründe; `/retry-analysis` verarbeitet sie erneut. `selftest.bat` startet Ollama und Gemma, prüft automatisch mit einer temporären synthetischen Datenbank und beendet Ollama anschließend. [Hotfix-Anleitung](HOTFIX-0.3.1.md). Das ZIP enthält keine private Konfiguration, Persönlichkeitsdatei oder Datenbank; diese bleiben im lokalen LAB-Datenordner erhalten.

@@ -3,8 +3,9 @@ import json
 import sqlite3
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
-from analysis import Analyzer, validate_claim
+from analysis import Analyzer, validate_claim, parse_response
 from memory import Memory
 
 
@@ -28,6 +29,8 @@ class AnalysisTest(unittest.TestCase):
         self.assertEqual(validate_claim(mistaken,'In our story, Alex flew to Mars')['status'],'fictional')
         pronoun=claim('Emma','studied','','psychology','She studied psychology')
         self.assertEqual(validate_claim(pronoun,'She studied psychology')['status'],'pending')
+        with self.assertRaisesRegex(ValueError,'abgeschnittenes JSON'):
+            parse_response({'message':{'content':'{"claims": ['},'done_reason':'length'})
 
     def test_people_relations_reanalysis_and_resume(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -127,6 +130,39 @@ class AnalysisTest(unittest.TestCase):
             self.assertEqual(migrated.db.execute('SELECT value FROM marker').fetchone()[0],'keep')
             self.assertTrue(list(Path(folder).glob('*.pre-v03-*.bak')))
             migrated.close()
+
+    def test_http_schema_fallback_and_failed_reason(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'memory.sqlite3'
+            store=Memory(path); c=store.conversation()
+            mid=store.add_message(c,'user','Emma studied psychology.')
+            store.enqueue(mid)
+            attempts=[]
+            valid=claim('Emma','studied','','psychology','Emma studied psychology.')
+            def opener(request,timeout):
+                attempts.append(json.loads(request.data))
+                if len(attempts)==1:
+                    raise urllib.error.HTTPError(request.full_url,400,'bad format',None,io.BytesIO(b'unsupported schema'))
+                return io.BytesIO(json.dumps({'message':{'content':json.dumps({'claims':[valid]})}}).encode())
+            analyzer=Analyzer(path,{'model':'gemma4:12b'},opener)
+            self.assertTrue(analyzer.analyze_one())
+            self.assertEqual(attempts[0]['format']['type'],'object')
+            self.assertEqual(attempts[1]['format'],'json')
+            self.assertEqual(attempts[1]['options']['num_predict'],1536)
+            self.assertEqual(store.job_counts().get('done'),1)
+            analyzer.stop();store.close()
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'memory.sqlite3'
+            store=Memory(path); c=store.conversation()
+            mid=store.add_message(c,'user','Emma studied psychology.')
+            store.enqueue(mid)
+            bad=lambda request,timeout: io.BytesIO(b'{"message":{"content":"{broken"},"done_reason":"length"}')
+            analyzer=Analyzer(path,{'model':'gemma4:12b'},bad)
+            self.assertFalse(analyzer.analyze_one())
+            self.assertIn('abgeschnittenes JSON',store.failed_jobs()[0]['error'])
+            self.assertEqual(store.retry_failed(),1)
+            self.assertEqual(store.job_counts().get('pending'),1)
+            analyzer.stop();store.close()
 
 
 if __name__=='__main__': unittest.main()

@@ -1,9 +1,9 @@
 """Validierte, unterbrechbare Analyse mit dem bereits geladenen Ollama-Modell."""
-import hashlib
 import json
 import re
 import threading
 import time
+import urllib.error
 import urllib.request
 from memory import Memory
 
@@ -11,16 +11,49 @@ KINDS={'person','pet','project','place','film','computer','other'}
 PREDICATES={'has_sister','has_brother','has_dog','has_cat','friend_of','studied','works_as','likes','dislikes','lives_in','discussed','created','experienced','related_to'}
 SCOPES={'personal','episodic','semantic','narrative','hypothesis'}
 SCHEMA={'type':'object','properties':{'claims':{'type':'array','items':{'type':'object','properties':{
-    'subject':{'type':'string'},'subject_kind':{'type':'string'},'predicate':{'type':'string'},
-    'object':{'type':'string'},'object_kind':{'type':'string'},'value':{'type':'string'},
-    'evidence':{'type':'string'},'scope':{'type':'string'},'confidence':{'type':'number'}},
+    'subject':{'type':'string'},'subject_kind':{'type':'string','enum':sorted(KINDS)},
+    'predicate':{'type':'string','enum':sorted(PREDICATES)},
+    'object':{'type':'string'},'object_kind':{'type':'string','enum':sorted(KINDS)},'value':{'type':'string'},
+    'evidence':{'type':'string'},'scope':{'type':'string','enum':sorted(SCOPES)},
+    'confidence':{'type':'number','minimum':0,'maximum':1}},
     'required':['subject','subject_kind','predicate','object','object_kind','value','evidence','scope','confidence'],
     'additionalProperties':False}}},'required':['claims'],'additionalProperties':False}
-PROMPT=('Extract only information the USER supplied in the newest message. Use earlier turns only to resolve clear references. '
-        'Return JSON matching the schema. Quote an exact evidence span from the newest user message. '
+PROMPT=('Extract at most 8 compact claims from information the USER supplied in the newest message. Use earlier turns only to resolve clear references. '
+        'Return only JSON: {"claims":[{"subject":"Alex","subject_kind":"person","predicate":"has_sister",'
+        '"object":"Emma","object_kind":"person","value":"","evidence":"My sister Emma",'
+        '"scope":"personal","confidence":0.9}]}. Quote an exact evidence span from the newest user message. '
+        'Allowed predicates: '+', '.join(sorted(PREDICATES))+'. Allowed scopes: '+', '.join(sorted(SCOPES))+'. '
         'Never treat assistant claims as personal facts. For ambiguity use scope hypothesis. '
-        'For fictional stories use scope narrative. If nothing is supported, return an empty claims list. '
-        'Use short canonical predicates from the schema vocabulary.')
+        'For fictional stories use scope narrative. If nothing is supported, return {"claims":[]}.')
+
+
+def parse_response(event):
+    if not isinstance(event,dict):
+        raise ValueError('Ollama-Antwort ist kein JSON-Objekt')
+    if event.get('error'):
+        raise RuntimeError('Ollama: '+str(event['error'])[:160])
+    content=event.get('message',{}).get('content','')
+    if not isinstance(content,str) or not content.strip():
+        raise ValueError('Ollama lieferte keinen Analyse-Text')
+    text=content.strip()
+    if text.startswith('```'):
+        text=re.sub(r'^```(?:json)?\s*|\s*```$','',text,flags=re.I).strip()
+    try:
+        parsed=json.loads(text)
+    except json.JSONDecodeError as error:
+        reason='abgeschnittenes JSON' if event.get('done_reason')=='length' or error.pos>=len(text)-2 else 'ungueltiges JSON'
+        raise ValueError(f'{reason} bei Zeichen {error.pos}: {error.msg}') from error
+    if not isinstance(parsed,dict) or not isinstance(parsed.get('claims'),list):
+        raise ValueError('JSON enthaelt kein claims-Array')
+    return parsed
+
+
+def http_reason(error):
+    try:
+        body=error.read(512).decode('utf-8','replace')
+    except (OSError,AttributeError):
+        body=''
+    return f'HTTP {error.code}: {body[:240]}'
 
 
 def validate_claim(claim, source):
@@ -99,20 +132,40 @@ class Analyzer:
             payload={'model':self.config.get('model','gemma4:12b'),
                      'messages':[{'role':'system','content':PROMPT},
                                  {'role':'user','content':json.dumps(context,ensure_ascii=False)}],
-                     'format':SCHEMA,'stream':False,'keep_alive':self.config.get('keep_alive',-1),
-                     'options':{'temperature':0,'num_predict':350,'num_ctx':self.config.get('num_ctx',8192)}}
-            request=urllib.request.Request(self.config.get('ollama_url','http://localhost:11434').rstrip('/')+'/api/chat',
-                                           data=json.dumps(payload).encode('utf-8'),headers={'Content-Type':'application/json'})
-            with self.opener(request,timeout=60) as response:
-                self.response=response
-                event=json.load(response)
-                self.response=None
+                     'format':SCHEMA,'stream':False,'think':False,
+                     'keep_alive':self.config.get('keep_alive',-1),
+                     'options':{'temperature':0,'num_predict':1024,'num_ctx':self.config.get('num_ctx',8192)}}
+            parsed=None
+            for attempt in range(2):
+                if self.stop_event.is_set() or self.pause_event.is_set():
+                    raise RuntimeError('Analyse abgebrochen')
+                request=urllib.request.Request(self.config.get('ollama_url','http://localhost:11434').rstrip('/')+'/api/chat',
+                                               data=json.dumps(payload).encode('utf-8'),headers={'Content-Type':'application/json'})
+                try:
+                    with self.opener(request,timeout=90) as response:
+                        self.response=response
+                        try:
+                            event=json.load(response)
+                        finally:
+                            self.response=None
+                    parsed=parse_response(event)
+                    break
+                except urllib.error.HTTPError as error:
+                    reason=http_reason(error)
+                    if attempt==0 and error.code in (400,422):
+                        payload['format']='json'
+                        payload['options']['num_predict']=1536
+                        continue
+                    raise RuntimeError(reason) from error
+                except ValueError as error:
+                    if attempt==0:
+                        payload['format']='json'
+                        payload['options']['num_predict']=1536
+                        continue
+                    raise
             if self.stop_event.is_set() or self.pause_event.is_set():
                 self.memory.finish_job(job['id'],'cancelled')
                 return False
-            parsed=json.loads(event['message']['content'])
-            if not isinstance(parsed,dict) or not isinstance(parsed.get('claims'),list):
-                raise ValueError('Ungueltige JSON-Claims')
             for candidate in parsed['claims'][:12]:
                 claim=validate_claim(candidate,job['text'])
                 if claim:

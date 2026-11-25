@@ -90,6 +90,9 @@ class Memory:
             cur=self.db.execute("UPDATE analysis_jobs SET status='pending',error=NULL,updated_at=? WHERE status='failed'",(utc_now(),))
         return cur.rowcount
 
+    def failed_jobs(self,limit=30):
+        return [dict(row) for row in self.db.execute("SELECT id,message_id,attempts,error,updated_at FROM analysis_jobs WHERE status='failed' ORDER BY id LIMIT ?",(limit,))]
+
     def next_job(self):
         row=self.db.execute("SELECT j.id,j.message_id,m.text,m.conversation_id FROM analysis_jobs j JOIN messages m ON m.id=j.message_id WHERE j.status='pending' ORDER BY j.id LIMIT 1").fetchone()
         if not row:
