@@ -9,6 +9,7 @@ unsigned char link_test_tx(unsigned char index);
 void link_test_tx_reset(void);
 unsigned char link_test_command(void);
 void link_test_status(unsigned char status);
+unsigned int link_test_drop_count(void);
 static char last_message[128];
 void ui_line(const char *message)
 {
@@ -132,9 +133,24 @@ int main(void)
     assert(!link_waiting);
     assert(link_state == LINK_ONLINE);
     assert(link_send_text("NOCH EIN TEST"));
+    link_test_feed("[[GIZMO:BEGIN]]\r");
+    { unsigned char i; for (i = 0; i < 10; ++i) link_tick(); }
+    {
+        unsigned char i, j;
+        for (i = 0; i < 100; ++i) {
+            link_test_feed("TEST?!,.:;\"'()-=/\r");
+            for (j = 0; j < 24; ++j) link_tick();
+            assert(link_test_drop_count() == 0);
+        }
+    }
+    link_test_feed("[[GIZMO:PARA]]\r[[GIZMO:END]]\r");
+    { unsigned char i; for (i = 0; i < 25; ++i) link_tick(); }
+    assert(!link_waiting);
+    assert(link_test_drop_count() == 0);
+    assert(link_send_text("TIMEOUT TEST"));
     { unsigned char i; for (i = 0; i < 20; ++i) link_tick(); }
     link_test_advance(7501); link_tick();
     assert(!link_waiting);
-    assert(link_state == LINK_ONLINE);
+    assert(link_state == LINK_HANGUP);
     return 0;
 }

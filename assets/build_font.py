@@ -1,4 +1,4 @@
-"""Erzeugt den eigenstaendigen 5x7-Zeichensatz fuer das GIZMO-Terminal."""
+"""Erzeugt den eigenstaendigen 5x6-Zeichensatz fuer das GIZMO-Terminal."""
 from pathlib import Path
 
 # Fuenf Spalten, sieben Zeilen. Eins steht fuer einen gesetzten Pixel.
@@ -77,10 +77,10 @@ def build():
         if "A" <= character <= "Z":
             codes.append(ord(character) - 64)
         for code in codes:
-            for y, row in enumerate(rows):
-                font[code * 8 + y] = int(row, 2) << 2
-    font[95 * 8 + 3] = 0xff  # Durchgehende Trennlinie
-    for y in range(7):
+            for y, source in enumerate((0, 1, 2, 3, 4, 6), start=1):
+                font[code * 8 + y] = int(rows[source], 2) << 2
+    font[95 * 8 + 4] = 0xff  # Durchgehende Trennlinie
+    for y in range(1, 7):
         font[96 * 8 + y] = 0x40  # Schmaler Cursor
     # Die obere Haelfte enthaelt gezielte inverse Zeichen.
     for code in range(128):

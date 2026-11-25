@@ -13,10 +13,10 @@ jobs:
       - name: Test C client and Python bridge
         run: make test
       - name: Build package
-        run: make package
+        run: make package-022
       - name: Upload complete package
         uses: actions/upload-artifact@v4
         with:
-          name: GIZMO64-v0.2.1
-          path: GIZMO64-v0.2.1.zip
+          name: GIZMO64-v0.2.2
+          path: GIZMO64-v0.2.2.zip
           if-no-files-found: error

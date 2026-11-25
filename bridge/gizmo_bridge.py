@@ -66,16 +66,19 @@ def ascii_screen(text):
     text = unicodedata.normalize("NFKD", text)
     text = text.encode("ascii", "ignore").decode("ascii")
     text = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", text)
-    words = text.split()
     lines, current = [], ""
-    for word in words:
-        for part in (word[i:i + 31] for i in range(0, len(word), 31)):
-            if len(current) + len(part) + bool(current) > 31:
-                lines.append(current)
-                current = ""
-            current = (current + " " + part).strip()
-    if current:
-        lines.append(current)
+    for paragraph in re.split(r"\n\s*\n", text):
+        if lines:
+            lines.append("[[GIZMO:PARA]]")
+        for word in paragraph.split():
+            for part in (word[i:i + 31] for i in range(0, len(word), 31)):
+                if len(current) + len(part) + bool(current) > 31:
+                    lines.append(current)
+                    current = ""
+                current = (current + " " + part).strip()
+        if current:
+            lines.append(current)
+            current = ""
     return lines or ["SIGNAL EMPFANGEN. KEIN TEXT."]
 
 
@@ -141,6 +144,7 @@ class Bridge:
         self.stop_lock = threading.Lock()
         self.ollama_lock = threading.Lock()
         self.ollama = None
+        self.active_ollama_response = None
 
     def _load_facts(self):
         try:
@@ -167,22 +171,25 @@ class Bridge:
                 raise RuntimeError("Bruecke wird beendet")
             if self._ollama_ready():
                 print("[+] Ollama bereit", flush=True)
-                self.preload_model()
-                return
-            print("[+] Starte Ollama...", flush=True)
-            flags = subprocess.CREATE_NEW_PROCESS_GROUP if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP") else 0
-            self.ollama = subprocess.Popen(["ollama", "serve"], creationflags=flags,
-                                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            else:
+                print("[+] Starte Ollama...", flush=True)
+                flags = subprocess.CREATE_NEW_PROCESS_GROUP if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP") else 0
+                self.ollama = subprocess.Popen(["ollama", "serve"], creationflags=flags,
+                                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if self.ollama:
             for _ in range(80):
                 if self.stop_event.wait(0.25):
                     raise RuntimeError("Ollama-Start abgebrochen")
                 if self._ollama_ready():
                     print("[+] Ollama bereit", flush=True)
-                    self.preload_model()
-                    return
-            raise RuntimeError("Ollama wurde nicht bereit")
+                    break
+            else:
+                raise RuntimeError("Ollama wurde nicht bereit")
+        self.preload_model()
 
     def preload_model(self):
+        if self.stop_event.is_set():
+            raise RuntimeError("Modellladen abgebrochen")
         print(f"[.] Lade Modell {self.config['model']}...", flush=True)
         payload = json.dumps({"model": self.config["model"], "prompt": "",
                               "stream": False, "keep_alive": -1}).encode("utf-8")
@@ -190,7 +197,15 @@ class Bridge:
         request = urllib.request.Request(url, data=payload,
                                          headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(request, timeout=120) as response:
-            result = json.load(response)
+            self.active_ollama_response = response
+            try:
+                if self.stop_event.is_set():
+                    raise RuntimeError("Modellladen abgebrochen")
+                result = json.load(response)
+            finally:
+                self.active_ollama_response = None
+        if self.stop_event.is_set():
+            raise RuntimeError("Modellladen abgebrochen")
         if result.get("error"):
             raise RuntimeError(result["error"])
         print("[+] Modell geladen und gehalten", flush=True)
@@ -233,6 +248,11 @@ class Bridge:
                 return
             print("[.] Fahre GIZMO-Bruecke herunter...", flush=True)
             self.stop_event.set()
+            if self.active_ollama_response:
+                try:
+                    self.active_ollama_response.close()
+                except OSError:
+                    pass
             if self.server:
                 self.server.close()
                 self.server = None
@@ -244,7 +264,8 @@ class Bridge:
                 except OSError:
                     pass
                 client.close()
-            self._stop_ollama()
+            with self.ollama_lock:
+                self._stop_ollama()
             print("[+] Bruecke beendet", flush=True)
 
     def _chat(self, prompt):
@@ -288,6 +309,30 @@ class Bridge:
         if paced:
             self.stop_event.wait((len(text) + 2) * 10 / 2400)
 
+    def _send_acked(self, client, text):
+        """Stop-and-wait: erst nach dem Zeichnen der Zeile weitersenden."""
+        self._send(client, text)
+        previous = client.gettimeout()
+        client.settimeout(120)
+        try:
+            reply = bytearray()
+            while not self.stop_event.is_set():
+                byte = client.recv(1)
+                if not byte:
+                    raise ConnectionError("C64 getrennt")
+                if byte in (b"\r", b"\n"):
+                    if reply:
+                        if reply != b"ACK":
+                            raise RuntimeError("Unerwartete C64-Antwort: " + reply.decode("ascii", "replace"))
+                        return
+                elif len(reply) < 32:
+                    reply.extend(byte)
+                else:
+                    raise RuntimeError("C64-Antwort zu lang")
+            raise ConnectionError("Bruecke wird beendet")
+        finally:
+            client.settimeout(previous)
+
     def _answer(self, client, prompt):
         begun = False
         try:
@@ -307,8 +352,8 @@ class Bridge:
                 answer = " | ".join(self.facts[-5:]) if self.facts else "NOCH KEINE FAKTEN GESPEICHERT."
             else:
                 answer = None
-            self._send(client, BEGIN)
             begun = True
+            self._send_acked(client, BEGIN)
             stream = [answer] if local else self._chat(prompt)
             filter_thoughts = ThinkFilter()
             visible = ""
@@ -319,25 +364,27 @@ class Bridge:
                 visible += filter_thoughts.feed(chunk)
                 stable = ascii_screen(visible)[:-1]
                 for line in stable[sent:]:
-                    self._send(client, line, paced=True)
+                    self._send_acked(client, line)
                     print(f"GIZMO > {line}", flush=True)
                     sent += 1
             visible += filter_thoughts.finish()
             for line in ascii_screen(visible)[sent:]:
-                self._send(client, line, paced=True)
+                self._send_acked(client, line)
                 print(f"GIZMO > {line}", flush=True)
-            self._send(client, END)
+            self._send_acked(client, END)
             if not local:
                 self.context.extend([{"role": "user", "content": prompt},
                                      {"role": "assistant", "content": visible}])
                 self.context = self.context[-20:]
         except (OSError, urllib.error.URLError, RuntimeError, KeyError, ValueError) as error:
             if not self.stop_event.is_set():
-                if not begun:
-                    self._send(client, BEGIN)
-                self._send(client, "ANTWORT UNTERBROCHEN: OLLAMA FEHLER." if begun
-                           else "OLLAMA NICHT ERREICHBAR.")
-                self._send(client, END)
+                try:
+                    if not begun:
+                        self._send_acked(client, BEGIN)
+                    self._send_acked(client, "ANTWORT UNTERBROCHEN: OLLAMA FEHLER.")
+                    self._send_acked(client, END)
+                except (OSError, RuntimeError):
+                    pass
                 print(f"[!] Antwort unterbrochen: {error}", flush=True)
                 print(f"Anfrage fehlgeschlagen: {error}")
 

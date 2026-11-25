@@ -1,5 +1,7 @@
 # GIZMO-64
 
+Version 0.2.2 stabilisiert das Streaming durch eine Empfangsbestätigung pro Antwortzeile und nutzt einen 5×6-Zeichensatz. [Kurzanleitung und Hardwaretest](docs/kurzanleitung-0.2.2.md). Die PC-Brücke und die PRG müssen gemeinsam aktualisiert werden.
+
 GIZMO-64 ist ein nativer C64-Ultimate-Client mit einer lokalen Python-TCP-Brücke zu Ollama. Version 0.2.1 ergänzt gestreamte, längere Antworten, eine ausgearbeitete Persönlichkeit und einen eigenen 5×7-Zeichensatz. Der hardwaregetestete Stand 0.1.2 ist als Git-Tag `v0.1.2` gesichert.
 
 Die [Kurzanleitung 0.2.1](docs/kurzanleitung-0.2.1.md) beschreibt Installation und Bedienung. [Technik und VICE-Prüfung](docs/personality-typography.md) dokumentieren Zeichensatz, Speicherkarte, Kodierung und Grenzen.

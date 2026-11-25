@@ -55,9 +55,13 @@ static void keyboard(void)
     c = cgetc();
     ui_key_sound();
     if (c == 0x85) { ui_theme(); return; }
+    if (link_waiting && c == 13) return;
     if (c == 13) { execute(); return; }
     if (c == 20 || c == 8) {
-        if (input_length) { input[--input_length] = 0; ui_input_backspace(); }
+        if (input_length) {
+            input[--input_length] = 0;
+            if (!link_waiting) ui_input_backspace();
+        }
         return;
     }
 #ifdef __CC65__
@@ -71,13 +75,13 @@ static void keyboard(void)
     if (input_length >= 120) return;
     input[input_length++] = c;
     input[input_length] = 0;
-    ui_input_char(c);
+    if (!link_waiting) ui_input_char(c);
 }
 
 int main(void)
 {
     ui_init();
-    ui_system("BOOT / GIZMO-64 0.2.1");
+    ui_system("BOOT / GIZMO-64 0.2.2");
     ui_system("VIDEO + AUDIO / BEREIT");
     link_init();
     ui_system("ACIA $DE00 / PRUEFUNG");

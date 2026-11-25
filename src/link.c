@@ -161,6 +161,7 @@ static void received_line(void)
         response_started = 1;
         ui_line("");
         ui_gizmo_start();
+        send("ACK"); send_cr();
         return;
     }
     if (strcmp(line, "[[GIZMO:END]]") == 0) {
@@ -168,9 +169,15 @@ static void received_line(void)
         ui_waiting(0);
         ui_key_sound();
         ui_line("");
+        send("ACK"); send_cr();
         return;
     }
-    if (response_started) { ui_gizmo(line); return; }
+    if (response_started) {
+        if (strcmp(line, "[[GIZMO:PARA]]") == 0) ui_line("");
+        else ui_gizmo(line);
+        send("ACK"); send_cr();
+        return;
+    }
     if (strncmp(line, "FACTS: ", 7) == 0) {
         ui_memory_count((unsigned char)atoi(line + 7));
         return;
@@ -229,6 +236,8 @@ void link_tick(void)
     while (rx_tail != rx_head && quota--) {
         c = rx[rx_tail];
         rx_tail = (rx_tail + 1) & 127;
+        if (link_waiting && !pending_active)
+            response_deadline = now() + (unsigned int)150 * tick_rate;
         if (c == 13 || c == 10) {
             if (c == 10 && last_cr) { last_cr = 0; continue; }
             last_cr = (c == 13);
@@ -266,6 +275,7 @@ void link_tick(void)
         link_waiting = response_started = 0;
         ui_waiting(0);
         ui_system("GIZMO / ANTWORT UNVOLLSTAENDIG");
+        disconnect(1);
     }
 }
 
@@ -391,4 +401,6 @@ unsigned char link_test_tx(unsigned char index) { return test_tx[index]; }
 void link_test_tx_reset(void) { test_tx_length = 0; }
 unsigned char link_test_command(void) { return COMMAND; }
 void link_test_status(unsigned char status) { test_status = status; }
+unsigned int link_test_drop_count(void) { return drop_count; }
+unsigned int link_test_overrun_count(void) { return overrun_count; }
 #endif

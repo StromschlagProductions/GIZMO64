@@ -1,4 +1,5 @@
 import socket
+import select
 import sys
 import tempfile
 import threading
@@ -28,15 +29,20 @@ class BridgeTest(unittest.TestCase):
         self.thread.join(timeout=2)
         self.folder.cleanup()
 
+    def read_reply(self):
+        line = self.stream.readline().strip()
+        self.client.sendall(b"ACK\r")
+        return line
+
     def test_fragmented_ping_and_framed_reply(self):
         self.client.sendall(b"PI")
         self.client.sendall(b"NG\r")
         self.assertEqual(self.stream.readline().strip(), b"PONG // GIZMO UPLINK AKTIV")
         self.client.sendall(b"HALLO GIZMO\r\n")
-        self.assertEqual(self.stream.readline().strip(), BEGIN.encode())
+        self.assertEqual(self.read_reply(), BEGIN.encode())
         lines = []
         while True:
-            line = self.stream.readline().strip()
+            line = self.read_reply()
             if line == END.encode():
                 break
             lines.append(line)
@@ -48,9 +54,9 @@ class BridgeTest(unittest.TestCase):
 
     def test_memory_and_status(self):
         self.client.sendall(b"MERKE: Der Kompass zeigt Norden\r")
-        self.assertEqual(self.stream.readline().strip(), BEGIN.encode())
-        self.assertIn(b"GEMERKT", self.stream.readline())
-        while self.stream.readline().strip() != END.encode():
+        self.assertEqual(self.read_reply(), BEGIN.encode())
+        self.assertIn(b"GEMERKT", self.read_reply())
+        while self.read_reply() != END.encode():
             pass
         self.client.sendall(b"STATUS\r")
         self.assertEqual(self.stream.readline().strip(), b"FACTS: 1")
@@ -82,12 +88,40 @@ class BridgeTest(unittest.TestCase):
         self.client.sendall(b"FRAGE\r")
         lines = []
         while True:
-            line = self.stream.readline().strip()
+            line = self.read_reply()
             lines.append(line)
             if line == END.encode():
                 break
         self.assertEqual(lines.count(BEGIN.encode()), 1)
         self.assertIn(b"ANTWORT UNTERBROCHEN", b" ".join(lines))
+
+    def test_hundred_lines_and_paragraphs(self):
+        self.bridge._chat = lambda _: iter(["Test? Satz!\n\n" + "Wort " * 800])
+        self.client.sendall(b"LANG\r")
+        lines = []
+        while True:
+            line = self.read_reply()
+            if line == END.encode():
+                break
+            lines.append(line)
+        self.assertEqual(lines[0], BEGIN.encode())
+        self.assertIn(b"[[GIZMO:PARA]]", lines)
+        self.assertGreaterEqual(len(lines), 100)
+        self.assertEqual(sum(line.count(b"Wort") for line in lines), 800)
+
+    def test_slow_receiver_controls_next_line(self):
+        self.bridge._chat = lambda _: iter(["Erste Zeile. Zweite Zeile. Dritte Zeile."])
+        self.client.sendall(b"FRAGE\r")
+        self.assertEqual(self.stream.readline().strip(), BEGIN.encode())
+        self.assertFalse(select.select([self.client], [], [], 0.05)[0])
+        self.client.sendall(b"A")
+        self.client.sendall(b"CK\r")
+        first = self.stream.readline().strip()
+        self.assertTrue(first)
+        self.assertFalse(select.select([self.client], [], [], 0.05)[0])
+        self.client.sendall(b"ACK\r")
+        while self.read_reply() != END.encode():
+            pass
 
 
 if __name__ == "__main__":
