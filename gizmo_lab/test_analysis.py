@@ -11,10 +11,20 @@ from version import VERSION
 
 def claim(subject,predicate,obj,value,evidence,confidence=.95,scope='personal',subject_kind='person',object_kind='other'):
     return {'subject':subject,'subject_kind':subject_kind,'predicate':predicate,'object':obj,
-            'object_kind':object_kind,'value':value,'evidence':evidence,'scope':scope,'confidence':confidence}
+            'object_kind':object_kind,'property_key':'','value':value,'evidence':evidence,'scope':scope,'confidence':confidence}
 
 
 class AnalysisTest(unittest.TestCase):
+    def test_redundant_attribute_object_is_normalized(self):
+        item=claim('Nora','attribute','antique postcards','antique postcards','Nora collects antique postcards.')
+        item['property_key']='collection'
+        validated=validate_claim(item,'Nora collects antique postcards.')
+        self.assertEqual(validated['object'],'')
+        self.assertEqual(validated['property_key'],'collection')
+    def test_unmarked_model_narrative_label_does_not_hide_conflict(self):
+        item=claim('Emma','works_as','','pilot','Emma works as a pilot.',scope='narrative')
+        validated=validate_claim(item,'Emma works as a pilot.')
+        self.assertEqual((validated['scope'],validated['status']),('hypothesis','pending'))
     def test_schema_evidence_and_speculation(self):
         direct=claim('Alex','has_sister','Emma','','My sister Emma')
         self.assertEqual(validate_claim(direct,'My sister Emma studies psychology.')['status'],'active')

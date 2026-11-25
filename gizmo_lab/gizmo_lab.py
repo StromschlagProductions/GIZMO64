@@ -449,6 +449,7 @@ def run_gui(screenshot=None, qa_report=None):
             super().__init__(); self.lab=None; self.busy=False; self.closing=False
             self.last_error=None
             self.pending_prompts=[]
+            self.archive_page=0;self.archive_data_version=None
             self.shutdown_requested=threading.Event()
             self.thread=None; self.task=None; self.last_speed=None; self.last_time=None
             self.setWindowTitle('GIZMO // CENTRAL INTELLIGENCE CORE'); self.resize(850,960)
@@ -539,17 +540,25 @@ def run_gui(screenshot=None, qa_report=None):
             save=QPushButton('SAVE SETTINGS');save.clicked.connect(self.save_settings);layout.addWidget(save);layout.addStretch()
             layout.addWidget(self.label('Saved locally. Changes to model parameters take effect on the next request.','dim'))
         def build_archive_page(self):
-            layout=self.page('ARCHIVE // LOCAL');tabs=QTabWidget();self.tables={}
-            for key,columns in [('memories',['ID','STATUS','DOMAIN','KEY','VALUE']),('entities',['ID','STATUS','KIND','NAME']),('relations',['ID','STATUS','SUBJECT','RELATION','TARGET']),('jobs',['ID','STATUS','ATTEMPTS','ERROR'])]:
+            layout=self.page('ARCHIVE // LOCAL');self.archive_tabs=QTabWidget();self.tables={}
+            search_row=QHBoxLayout();self.archive_search=QLineEdit();self.archive_search.setPlaceholderText('Search archive...')
+            self.archive_search.textChanged.connect(self.reset_archive_page);search_row.addWidget(self.archive_search);layout.addLayout(search_row)
+            for key,columns in [('memories',['ID','STATUS','DOMAIN','KEY','VALUE']),('entities',['ID','STATUS','KIND','NAME']),('relations',['ID','STATUS','SUBJECT','RELATION','TARGET','SOURCE']),('messages',['ID','ROLE','CONVERSATION','TEXT']),('jobs',['ID','STATUS','ATTEMPTS','ERROR'])]:
                 table=QTableWidget(0,len(columns));table.setHorizontalHeaderLabels(columns);table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch);table.setEditTriggers(QTableWidget.NoEditTriggers)
-                tabs.addTab(table,key.upper());self.tables[key]=table
-            layout.addWidget(tabs,1);row=QHBoxLayout();refresh=QPushButton('REFRESH');refresh.clicked.connect(self.refresh_archive)
+                self.archive_tabs.addTab(table,key.upper());self.tables[key]=table
+            self.archive_tabs.currentChanged.connect(self.reset_archive_page)
+            layout.addWidget(self.archive_tabs,1)
+            navigation=QHBoxLayout();previous=QPushButton('PREVIOUS');previous.clicked.connect(lambda:self.move_archive_page(-1))
+            following=QPushButton('NEXT');following.clicked.connect(lambda:self.move_archive_page(1))
+            self.archive_page_label=self.label('PAGE 1','dim');navigation.addWidget(previous);navigation.addWidget(self.archive_page_label);navigation.addWidget(following);layout.addLayout(navigation)
+            row=QHBoxLayout();refresh=QPushButton('REFRESH');refresh.clicked.connect(self.refresh_archive)
             edit=QPushButton('CORRECT MEMORY');edit.clicked.connect(self.correct_memory)
             delete=QPushButton('DELETE MEMORY');delete.setObjectName('shutdown');delete.clicked.connect(self.delete_memory)
             approve=QPushButton('APPROVE RELATION');approve.clicked.connect(lambda:self.change_relation('active'))
+            correct_relation=QPushButton('CORRECT PROPERTY');correct_relation.clicked.connect(self.correct_property)
             remove_relation=QPushButton('DELETE RELATION');remove_relation.setObjectName('shutdown');remove_relation.clicked.connect(lambda:self.change_relation('deleted'))
             row.addWidget(refresh);row.addWidget(edit);row.addWidget(delete);layout.addLayout(row)
-            relations_row=QHBoxLayout();relations_row.addWidget(approve);relations_row.addWidget(remove_relation);layout.addLayout(relations_row)
+            relations_row=QHBoxLayout();relations_row.addWidget(approve);relations_row.addWidget(correct_relation);relations_row.addWidget(remove_relation);layout.addLayout(relations_row)
             layout.addWidget(self.label('Deletion requires confirmation. The archive stays on this PC.','dim'))
         def log_line(self,text):
             self.log.append(datetime.now().strftime('%H:%M:%S')+'  '+text)
@@ -577,6 +586,7 @@ def run_gui(screenshot=None, qa_report=None):
             task.failed.connect(lambda _error:self.on_task_finished(thread))
             self.thread=thread;self.task=task;thread.start()
         def on_task_finished(self,thread):
+            self.archive_data_version=None
             if self.thread is thread:self.thread=None;self.task=None
             if not self.closing:self.set_busy(False)
             if self.shutdown_requested.is_set() and self.lab and not self.closing:
@@ -724,18 +734,48 @@ def run_gui(screenshot=None, qa_report=None):
         def persist_config(self,config):
             config_path=self.lab.data/'config.json';temp=config_path.with_suffix('.tmp')
             temp.write_text(json.dumps(config,indent=2,ensure_ascii=False),encoding='utf-8');os.replace(temp,config_path)
-        def open_archive(self):self.pages.setCurrentIndex(3);self.refresh_archive()
+        def open_archive(self):self.pages.setCurrentIndex(3);self.archive_data_version=None;self.refresh_archive()
+        def reset_archive_page(self,*_args):
+            self.archive_page=0;self.refresh_archive()
+        def move_archive_page(self,step):
+            self.archive_page=max(0,self.archive_page+step);self.refresh_archive()
         def refresh_archive(self):
             if not self.lab or self.busy:return
             memory=self.lab.memory
-            sets={'memories':[(r['id'],r['status'],r['domain'],r['key'],r['value']) for r in memory.db.execute('SELECT id,status,domain,key,value FROM memories ORDER BY id DESC LIMIT 500')],
-                'entities':[(r['id'],r['status'],r['kind'],r['name']) for r in memory.list_entities()],
-                'relations':[(r['id'],r['status'],r['subject'],r['predicate'],r['object'] or r['value']) for r in memory.list_relations()],
-                'jobs':[(r['id'],r['status'],r['attempts'],r['error'] or '') for r in memory.db.execute('SELECT id,status,attempts,error FROM analysis_jobs ORDER BY id DESC LIMIT 500')]}
-            for key,rows in sets.items():
-                table=self.tables[key];table.setRowCount(len(rows))
-                for i,row in enumerate(rows):
-                    for j,value in enumerate(row):table.setItem(i,j,QTableWidgetItem(str(value)))
+            key=list(self.tables)[self.archive_tabs.currentIndex()]
+            queries={
+                'memories':('memories','id,status,domain,key,value','status,domain,key,value'),
+                'entities':('entities','id,status,kind,name','status,kind,name'),
+                'relations':('relations r JOIN entities s ON s.id=r.subject_id LEFT JOIN entities o ON o.id=r.object_id',
+                    "r.id,r.status,s.name,CASE WHEN r.property_key<>'' THEN r.property_key ELSE r.predicate END,COALESCE(o.name,r.value,''),r.source_message_id",
+                    'r.status,s.name,r.predicate,r.property_key,o.name,r.value,r.evidence'),
+                'messages':('messages','id,role,conversation_id,text','role,conversation_id,text'),
+                'jobs':('analysis_jobs','id,status,attempts,COALESCE(error,\'\')','status,error')}
+            source,columns,search_columns=queries[key]
+            term=self.archive_search.text().strip()
+            fields=search_columns.split(',')
+            where=' WHERE ('+' OR '.join('COALESCE('+field+",'') LIKE ?" for field in fields)+')' if term else ''
+            args=['%'+term+'%']*len(fields) if term else []
+            total=memory.db.execute('SELECT COUNT(*) FROM '+source+where,args).fetchone()[0]
+            pages=max(1,(total+99)//100);self.archive_page=min(self.archive_page,pages-1)
+            rows=memory.db.execute('SELECT '+columns+' FROM '+source+where+' ORDER BY '+('r.id' if key=='relations' else 'id')+' DESC LIMIT 100 OFFSET ?',args+[self.archive_page*100]).fetchall()
+            table=self.tables[key];table.setRowCount(len(rows))
+            for i,row in enumerate(rows):
+                for j,value in enumerate(row):table.setItem(i,j,QTableWidgetItem(str(value if value is not None else '')))
+            self.archive_page_label.setText(f'PAGE {self.archive_page+1} / {pages}  //  {total} RECORDS')
+            self.archive_data_version=memory.db.execute('PRAGMA data_version').fetchone()[0]
+        def correct_property(self):
+            if not self.lab or self.busy:return
+            table=self.tables['relations'];row=table.currentRow()
+            if row<0:return
+            ident=int(table.item(row,0).text())
+            record=self.lab.memory.db.execute('SELECT predicate,value FROM relations WHERE id=?',(ident,)).fetchone()
+            if not record or record['predicate']!='attribute':
+                QMessageBox.information(self,'Correct property','Select an attribute relation first.');return
+            value,accepted=QInputDialog.getText(self,'Correct property','Confirmed value:',text=record['value'] or '')
+            if not accepted or not value.strip() or value.strip()==record['value']:return
+            if QMessageBox.question(self,'Confirm correction',f'Correct property #{ident}? The previous value will be recorded.')!=QMessageBox.Yes:return
+            self.lab.memory.correct_relation(ident,value.strip());self.refresh_archive()
         def delete_memory(self):
             if not self.lab or self.busy:return
             table=self.tables['memories'];row=table.currentRow()
@@ -768,7 +808,7 @@ def run_gui(screenshot=None, qa_report=None):
             self.indicators['c64'].setText('NOT CONNECTED');self.indicators['story'].setText('NOT INSTALLED')
             if active and not self.busy:
                 try:
-                    self.metrics['memories'].setText(str(self.lab.memory.db.execute("SELECT COUNT(*) FROM memories WHERE status='active'").fetchone()[0]))
+                    self.metrics['memories'].setText(str(self.lab.memory.db.execute("SELECT (SELECT COUNT(*) FROM memories WHERE status='active')+(SELECT COUNT(*) FROM relations WHERE status='active')").fetchone()[0]))
                     self.metrics['jobs'].setText(str(self.lab.memory.job_counts().get('pending',0)))
                 except Exception:self.metrics['memories'].setText('—');self.metrics['jobs'].setText('—')
             else:
@@ -779,6 +819,11 @@ def run_gui(screenshot=None, qa_report=None):
                 self.gpu_process.start('nvidia-smi',['--query-gpu=utilization.gpu,memory.used,memory.total','--format=csv,noheader,nounits'])
             self.pulse.active=active or self.busy
             self.graph.active=self.busy
+            if self.pages.currentIndex()==3 and self.lab and not self.busy:
+                try:
+                    version=self.lab.memory.db.execute('PRAGMA data_version').fetchone()[0]
+                    if self.archive_data_version is None or version!=self.archive_data_version:self.refresh_archive()
+                except Exception:pass
         def check_ollama_api(self):
             if self.api_pending:return
             self.api_pending=True
@@ -869,7 +914,20 @@ def run_gui(screenshot=None, qa_report=None):
                 report['checks']['missing_profile_warning_in_settings']='SYNTHETIC PROFILE MISSING' in window.profile_warning.text()
                 window.lab.personality_warning=previous_warning
                 window.show_profile()
-                window.open_archive();report['checks']['archive_page']=window.pages.currentIndex()==3 and 'jobs' in window.tables
+                window.open_archive();report['checks']['archive_page']=window.pages.currentIndex()==3 and 'jobs' in window.tables and 'messages' in window.tables
+                import sqlite3
+                archive_conversation=window.lab.memory.conversation()
+                with sqlite3.connect(window.lab.memory.path) as synthetic:
+                    synthetic.executemany('INSERT INTO messages(conversation_id,role,text,created_at) VALUES(?,?,?,?)',
+                        [(archive_conversation,'user',f'SYNTHETIC ARCHIVE ITEM {number}',utc_now()) for number in range(520)])
+                window.archive_tabs.setCurrentIndex(list(window.tables).index('messages'))
+                window.refresh_status()
+                report['checks']['archive_auto_refresh']=window.archive_page_label.text().endswith('520 RECORDS')
+                report['checks']['archive_pagination']='PAGE 1 / 6' in window.archive_page_label.text()
+                window.move_archive_page(5)
+                report['checks']['archive_beyond_500']=window.archive_page==5 and window.tables['messages'].rowCount()==20
+                window.archive_search.setText('ITEM 519')
+                report['checks']['archive_search']=window.tables['messages'].rowCount()==1 and '519' in window.tables['messages'].item(0,3).text()
                 window.pages.setCurrentIndex(0)
                 if screenshot:window.grab().save(str(screenshot))
                 window.open_model()

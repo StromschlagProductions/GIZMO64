@@ -5,16 +5,16 @@ import re
 import threading
 import time
 import urllib.request
-from memory import Memory, source_flags, token_bound
+from memory import Memory, source_flags, token_bound, normalize_property_key
 
-KINDS={'person','pet','project','place','film','computer','other'}
-PREDICATES={'has_sister','has_brother','has_mother','has_father','has_partner','has_child','has_dog','has_cat','friend_of','studied','works_as','likes','dislikes','lives_in','discussed','created','experienced','related_to'}
+KINDS={'person','pet','project','place','film','computer','object','event','interest','organization','other'}
+PREDICATES={'has_sister','has_brother','has_mother','has_father','has_partner','has_child','has_dog','has_cat','friend_of','studied','works_as','likes','dislikes','lives_in','discussed','created','experienced','related_to','attribute'}
 SCOPES={'personal','episodic','semantic','narrative','hypothesis'}
 SCHEMA={'type':'object','properties':{'claims':{'type':'array','items':{'type':'object','properties':{
-    'subject':{'type':'string'},'subject_kind':{'type':'string','enum':sorted(KINDS)},'predicate':{'type':'string','enum':sorted(PREDICATES)},
+    'subject':{'type':'string'},'subject_kind':{'type':'string','enum':sorted(KINDS)},'predicate':{'type':'string','enum':sorted(PREDICATES)},'property_key':{'type':'string'},
     'object':{'type':'string'},'object_kind':{'type':'string','enum':sorted(KINDS)},'value':{'type':'string'},
     'evidence':{'type':'string'},'scope':{'type':'string','enum':sorted(SCOPES)},'confidence':{'type':'number','minimum':0,'maximum':1}},
-    'required':['subject','subject_kind','predicate','object','object_kind','value','evidence','scope','confidence'],
+    'required':['subject','subject_kind','predicate','property_key','object','object_kind','value','evidence','scope','confidence'],
     'additionalProperties':False}}},'required':['claims'],'additionalProperties':False}
 PROMPT=('Extract only information the USER supplied in the newest message. Use earlier turns only to resolve clear references. '
         'Return JSON matching the schema. Quote an exact evidence span from the newest user message. '
@@ -24,7 +24,17 @@ PROMPT=('Extract only information the USER supplied in the newest message. Use e
         'Represent the speaker as USER unless their name is explicitly known from the context. '
         'For "My sister is Emma", use subject USER, predicate has_sister, object Emma, object_kind person. '
         'For "My dog is Milo", use subject USER, predicate has_dog, object Milo, object_kind pet. '
-        'For a literal attribute such as a subject studied psychology, use predicate studied, object "", object_kind other, value psychology. '
+        'For a literal attribute such as a subject studied psychology, use predicate studied, property_key "", object "", object_kind other, value psychology. '
+        'For ANY other explicit stable property of a named person, pet, place, object, interest or event, use predicate attribute, object "", object_kind other, a concise property_key such as breed, age, temperament, manufacturer, condition, personal_meaning, time or location, and the stated value. These keys are examples, never an exhaustive vocabulary. '
+        'For a named relationship not covered by a dedicated predicate, use related_to with a concise property_key describing the relation (owns, participated_in, accompanied_by, etc.) and a named object. '
+        'Ground the type of each relationship in the newest evidence: a radio is an object, never a dog; a visit is an event, never an attribute of the speaker. '
+        'For "My radio is named Atlas", create related_to USER owns Atlas (object_kind object); never has_dog. '
+        'For "The Atlas tuning knob is chipped", attach an attribute such as tuning_knob_condition=chipped to Atlas; do not generalize away the part. '
+        'For "Nora collects antique postcards", use attribute collection=antique postcards on Nora, not likes. '
+        'For "That Bergen trip was important because it was our first holiday together", use subject Bergen trip (event), attribute personal_meaning=first holiday together. '
+        'Use property_key "" for the dedicated predicates. Preserve distinct explicit properties in separate claims. '
+        'For a pronoun with one grounded antecedent, attach each explicit property to that antecedent, not to USER or a newly invented entity. '
+        'A stated animal type and stated sex are separate properties; do not infer sex from pronouns alone or traits from stereotypes. '
         'Preserve names and exact evidence in the original language. Earlier messages are context, not new claims. '
         'Use USER for the human speaker even when their name is known. Do not create a related_to claim for the speaker naming themselves; names use the separate personal memory. '
         'Resolve a pronoun only when there is one clear antecedent in user-authored context. Never infer a biography from a question. '
@@ -35,12 +45,24 @@ PROMPT=('Extract only information the USER supplied in the newest message. Use e
 def validate_claim(claim, source, context=None):
     if not isinstance(claim,dict) or set(claim)!=set(SCHEMA['properties']['claims']['items']['properties']):
         return None
-    if any(not isinstance(claim[k],str) or len(claim[k])>160 for k in ('subject','subject_kind','predicate','object','object_kind','value','evidence','scope')):
+    if any(not isinstance(claim[k],str) or len(claim[k])>160 for k in ('subject','subject_kind','predicate','property_key','object','object_kind','value','evidence','scope')):
         return None
     if claim['subject_kind'] not in KINDS or claim['object_kind'] not in KINDS or claim['predicate'] not in PREDICATES or claim['scope'] not in SCOPES:
         return None
+    property_key=normalize_property_key(claim['property_key']) if claim['predicate'] in ('attribute','related_to') else ''
+    attribute_object=claim['object'].strip()
+    if claim['predicate']=='attribute' and (not property_key or not claim['value'].strip() or
+        (attribute_object and attribute_object.casefold()!=claim['value'].strip().casefold())):
+        return None
     evidence=claim['evidence'].strip()
     if not evidence or evidence.casefold() not in source.casefold():
+        return None
+    # Dedicated kinship and pet edges require the stated relationship in the
+    # quoted source. This blocks model category errors before they enter memory.
+    required_terms={'has_dog':r'\b(dog|hund)\b','has_cat':r'\b(cat|katze)\b',
+                    'has_sister':r'\b(sister|schwester)\b','has_brother':r'\b(brother|bruder)\b',
+                    'has_mother':r'\b(mother|mutter)\b','has_father':r'\b(father|vater)\b'}
+    if claim['predicate'] in required_terms and not re.search(required_terms[claim['predicate']],evidence,re.I):
         return None
     try:
         confidence=float(claim['confidence'])
@@ -74,10 +96,16 @@ def validate_claim(claim, source, context=None):
             if re.search(r'\b(?:she|he|they|sie|er)\b',text,re.I) and re.search(re.escape(subject),text,re.I) is None:
                 continue
             break
-    status='active' if claim['scope'] in ('personal','semantic','episodic') and confidence>=.8 and not speculative and (not pronoun or resolved) else 'pending'
-    if claim['scope']=='narrative' or fictional:
+    scope=claim['scope']
+    if scope=='narrative' and not fictional:
+        # A model label alone cannot turn a plain user statement into a story.
+        # Keep it unconfirmed, but let it dispute an earlier factual value.
+        scope='hypothesis'
+    status='active' if scope in ('personal','semantic','episodic') and confidence>=.8 and not speculative and (not pronoun or resolved) else 'pending'
+    if fictional:
         status='fictional'
-    return {**claim,'confidence':confidence,'status':status}
+    return {**claim,'property_key':property_key,'object':'' if claim['predicate']=='attribute' else claim['object'],'scope':scope,
+            'confidence':confidence,'status':status}
 
 
 class Analyzer:
@@ -133,7 +161,7 @@ class Analyzer:
             if re.match(r'\s*(she|he|her|his|sie|er|ihr|sein)\b',job['text'],re.I):
                 references=[]
                 for entity in self.memory.db.execute("SELECT name,kind FROM entities WHERE status='active' AND kind IN ('person','pet') AND name<>'USER' LIMIT 256"):
-                    probe={'subject':entity['name'],'subject_kind':entity['kind'],'predicate':'related_to','object':'','object_kind':'other',
+                    probe={'subject':entity['name'],'subject_kind':entity['kind'],'predicate':'related_to','property_key':'','object':'','object_kind':'other',
                            'value':'reference','evidence':job['text'][:160],'scope':'personal','confidence':1}
                     checked=validate_claim(probe,job['text'],context)
                     if checked and checked['status']=='active':
@@ -186,7 +214,7 @@ class Analyzer:
             for claim in accepted:
                     self.memory.add_relation(claim['subject'].strip(),claim['subject_kind'],claim['predicate'],
                                              claim['object'].strip(),claim['object_kind'],claim['value'].strip(),
-                                             job['message_id'],claim['evidence'].strip(),claim['confidence'],claim['status'],claim['scope'])
+                                             job['message_id'],claim['evidence'].strip(),claim['confidence'],claim['status'],claim['scope'],claim['property_key'])
             self.memory.finish_job(job['id'])
             return True
         except Exception as error:

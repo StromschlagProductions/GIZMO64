@@ -4,6 +4,7 @@ import hashlib
 import re
 import sqlite3
 import time
+import unicodedata
 import uuid
 from contextlib import closing
 from datetime import datetime, timezone
@@ -11,6 +12,20 @@ from pathlib import Path
 from version import VERSION, SCHEMA_VERSION, ANALYSIS_REVISION
 class ContextBudgetError(RuntimeError):
     pass
+
+
+SINGLE_VALUE_PREDICATES={'lives_in','works_as'}
+MULTI_VALUE_PROPERTIES={'interest','like','dislike','trait','habit','preference','participant','feature','component'}
+
+
+def normalize_property_key(value):
+    key=unicodedata.normalize('NFKC',value).casefold().strip()
+    key=re.sub(r'[^\w]+','_',key,flags=re.UNICODE).strip('_')[:64]
+    aliases={'dog_breed':'breed','cat_breed':'breed','rasse':'breed','sex':'gender','geschlecht':'gender',
+             'years_old':'age','alter':'age','character':'trait','charakter':'trait','personality':'trait',
+             'temperament':'trait','job':'occupation','profession':'occupation','beruf':'occupation',
+             'make':'manufacturer','hersteller':'manufacturer','zustand':'condition'}
+    return aliases.get(key,key)
 
 
 def token_bound(text):
@@ -94,15 +109,15 @@ CREATE TABLE IF NOT EXISTS memories(id INTEGER PRIMARY KEY, domain TEXT NOT NULL
 CREATE TABLE IF NOT EXISTS memory_events(id INTEGER PRIMARY KEY, memory_id INTEGER NOT NULL, action TEXT NOT NULL, old_value TEXT, new_value TEXT, created_at TEXT NOT NULL, FOREIGN KEY(memory_id) REFERENCES memories(id));
 CREATE TABLE IF NOT EXISTS memory_sources(memory_id INTEGER NOT NULL, message_id INTEGER NOT NULL, PRIMARY KEY(memory_id,message_id), FOREIGN KEY(memory_id) REFERENCES memories(id), FOREIGN KEY(message_id) REFERENCES messages(id));
 CREATE TABLE IF NOT EXISTS entities(id INTEGER PRIMARY KEY, name TEXT NOT NULL COLLATE NOCASE, kind TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL, UNIQUE(name,kind));
-CREATE TABLE IF NOT EXISTS relations(id INTEGER PRIMARY KEY, subject_id INTEGER NOT NULL, predicate TEXT NOT NULL, object_id INTEGER, value TEXT, source_message_id INTEGER NOT NULL, evidence TEXT NOT NULL, confidence REAL NOT NULL, status TEXT NOT NULL, fingerprint TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, FOREIGN KEY(subject_id) REFERENCES entities(id), FOREIGN KEY(object_id) REFERENCES entities(id), FOREIGN KEY(source_message_id) REFERENCES messages(id));
+CREATE TABLE IF NOT EXISTS relations(id INTEGER PRIMARY KEY, subject_id INTEGER NOT NULL, predicate TEXT NOT NULL, property_key TEXT NOT NULL DEFAULT '', object_id INTEGER, value TEXT, source_message_id INTEGER NOT NULL, evidence TEXT NOT NULL, confidence REAL NOT NULL, status TEXT NOT NULL, fingerprint TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, FOREIGN KEY(subject_id) REFERENCES entities(id), FOREIGN KEY(object_id) REFERENCES entities(id), FOREIGN KEY(source_message_id) REFERENCES messages(id));
 CREATE TABLE IF NOT EXISTS relation_sources(relation_id INTEGER NOT NULL, message_id INTEGER NOT NULL, evidence TEXT NOT NULL, PRIMARY KEY(relation_id,message_id), FOREIGN KEY(relation_id) REFERENCES relations(id), FOREIGN KEY(message_id) REFERENCES messages(id));
-CREATE TABLE IF NOT EXISTS relation_events(id INTEGER PRIMARY KEY, relation_id INTEGER NOT NULL, action TEXT NOT NULL, created_at TEXT NOT NULL, FOREIGN KEY(relation_id) REFERENCES relations(id));
+CREATE TABLE IF NOT EXISTS relation_events(id INTEGER PRIMARY KEY, relation_id INTEGER NOT NULL, action TEXT NOT NULL, old_value TEXT, new_value TEXT, old_claim_key TEXT, created_at TEXT NOT NULL, FOREIGN KEY(relation_id) REFERENCES relations(id));
 CREATE TABLE IF NOT EXISTS analysis_jobs(id INTEGER PRIMARY KEY, message_id INTEGER NOT NULL UNIQUE, status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(message_id) REFERENCES messages(id));
 CREATE INDEX IF NOT EXISTS memories_domain_key ON memories(domain,key,status);
 CREATE INDEX IF NOT EXISTS relations_subject ON relations(subject_id,predicate,status);
 CREATE INDEX IF NOT EXISTS memory_sources_message ON memory_sources(message_id);
 CREATE INDEX IF NOT EXISTS relation_sources_message ON relation_sources(message_id);
-CREATE VIRTUAL TABLE IF NOT EXISTS relation_fts USING fts5(subject,predicate,target,evidence);
+CREATE VIRTUAL TABLE IF NOT EXISTS relation_fts USING fts5(subject,predicate,property,target,evidence);
 CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(key,value,content='memories',content_rowid='id');
 CREATE TRIGGER IF NOT EXISTS memory_ai AFTER INSERT ON memories BEGIN INSERT INTO memory_fts(rowid,key,value) VALUES(new.id,new.key,new.value); END;
 CREATE TRIGGER IF NOT EXISTS memory_ad AFTER DELETE ON memories BEGIN INSERT INTO memory_fts(memory_fts,rowid,key,value) VALUES('delete',old.id,old.key,old.value); END;
@@ -137,11 +152,21 @@ class Memory:
         self.db.execute('PRAGMA journal_mode=WAL')
         self.db.executescript(SCHEMA)
         columns={row['name'] for row in self.db.execute('PRAGMA table_info(relations)')}
-        for column,definition in [('scope',"TEXT NOT NULL DEFAULT 'personal'"),('claim_key','TEXT'),('subject_key','TEXT')]:
+        for column,definition in [('scope',"TEXT NOT NULL DEFAULT 'personal'"),('claim_key','TEXT'),('subject_key','TEXT'),('property_key',"TEXT NOT NULL DEFAULT ''")]:
             if column not in columns:
                 self.db.execute(f'ALTER TABLE relations ADD COLUMN {column} {definition}')
+        event_columns={row['name'] for row in self.db.execute('PRAGMA table_info(relation_events)')}
+        for column in ('old_value','new_value','old_claim_key'):
+            if column not in event_columns:
+                self.db.execute(f'ALTER TABLE relation_events ADD COLUMN {column} TEXT')
+        fts_columns={row['name'] for row in self.db.execute('PRAGMA table_info(relation_fts)')}
+        if 'property' not in fts_columns:
+            self.db.execute('DROP TABLE relation_fts')
+            self.db.execute('CREATE VIRTUAL TABLE relation_fts USING fts5(subject,predicate,property,target,evidence)')
         self.db.execute('CREATE INDEX IF NOT EXISTS relations_claim_key ON relations(claim_key,status)')
         self.db.execute('CREATE INDEX IF NOT EXISTS relations_slot ON relations(subject_key,predicate,status)')
+        self.db.execute('CREATE INDEX IF NOT EXISTS relations_property_slot ON relations(subject_key,predicate,property_key,status)')
+        self.db.execute('CREATE INDEX IF NOT EXISTS relation_corrections_old_key ON relation_events(old_claim_key)')
         with self.db:
             revision=self.db.execute("SELECT value FROM lab_metadata WHERE key='analysis_revision'").fetchone()
             self.retried_jobs=0
@@ -154,7 +179,7 @@ class Memory:
                 self.db.execute('DELETE FROM relation_fts')
                 for row in self.list_relations():
                     subject=self.canonical_subject(row['subject'])
-                    key=self.claim_key(subject,row['predicate'],row['object'] or row['value'])
+                    key=self.claim_key(subject,row['predicate'],row['object'] or row['value'],row['property_key'])
                     self.db.execute("UPDATE relations SET claim_key=?,subject_key=?,scope=CASE WHEN status='fictional' THEN 'narrative' ELSE scope END WHERE id=?",(key,subject.casefold(),row['id']))
                     self.index_relation(row['id'])
                 self.db.execute('INSERT OR IGNORE INTO memory_sources SELECT id,source_message_id FROM memories WHERE source_message_id IS NOT NULL')
@@ -248,15 +273,17 @@ class Memory:
         return names
 
     @staticmethod
-    def claim_key(subject,predicate,target):
+    def claim_key(subject,predicate,target,property_key=''):
         parts=[re.sub(r'\s+',' ',part.strip()).casefold() for part in (subject,predicate,target or '')]
+        if property_key:
+            parts.append(normalize_property_key(property_key))
         return hashlib.sha256(json.dumps(parts,ensure_ascii=False).encode('utf-8')).hexdigest()
 
     def index_relation(self,ident):
         row=self.db.execute('SELECT r.*,s.name subject,o.name object FROM relations r JOIN entities s ON s.id=r.subject_id LEFT JOIN entities o ON o.id=r.object_id WHERE r.id=?',(ident,)).fetchone()
         self.db.execute('DELETE FROM relation_fts WHERE rowid=?',(ident,))
-        self.db.execute('INSERT INTO relation_fts(rowid,subject,predicate,target,evidence) VALUES(?,?,?,?,?)',
-            (ident,self.canonical_subject(row['subject']),row['predicate'],row['object'] or row['value'],row['evidence']))
+        self.db.execute('INSERT INTO relation_fts(rowid,subject,predicate,property,target,evidence) VALUES(?,?,?,?,?,?)',
+            (ident,self.canonical_subject(row['subject']),row['predicate'],row['property_key'],row['object'] or row['value'],row['evidence']))
 
     def source_blocked(self,source_id):
         return bool(self.db.execute("""SELECT 1 FROM memory_sources s JOIN memories m ON m.id=s.memory_id
@@ -265,12 +292,20 @@ class Memory:
             UNION SELECT 1 FROM memories WHERE source_message_id=? AND status IN ('deleted','superseded')
             UNION SELECT 1 FROM relation_sources s JOIN relations r ON r.id=s.relation_id
             WHERE s.message_id=? AND (r.status IN ('deleted','superseded') OR EXISTS
-                (SELECT 1 FROM relations d WHERE d.claim_key=r.claim_key AND d.status='deleted')) LIMIT 1""",(source_id,source_id,source_id)).fetchone())
+                (SELECT 1 FROM relations d WHERE d.claim_key=r.claim_key AND d.status='deleted') OR EXISTS
+                (SELECT 1 FROM relation_events e WHERE e.relation_id=r.id AND e.action='manual_correction')) LIMIT 1""",(source_id,source_id,source_id)).fetchone())
 
-    def add_relation(self,subject,subject_kind,predicate,obj,object_kind,value,source_id,evidence,confidence,status,scope='personal'):
+    def add_relation(self,subject,subject_kind,predicate,obj,object_kind,value,source_id,evidence,confidence,status,scope='personal',property_key=''):
         subject=self.canonical_subject(subject)
-        key=self.claim_key(subject,predicate,obj or value)
-        if status=='active' and predicate in ('lives_in','works_as') and self.db.execute("SELECT 1 FROM relations WHERE subject_key=? AND predicate=? AND claim_key<>? AND status='active' AND scope IN ('personal','semantic','episodic') LIMIT 1",(subject.casefold(),predicate,key)).fetchone():
+        property_key=normalize_property_key(property_key) if predicate in ('attribute','related_to') else ''
+        if predicate=='attribute' and (not property_key or obj or not value):
+            raise ValueError('Attribut benötigt normierten Namen und Wert')
+        key=self.claim_key(subject,predicate,obj or value,property_key)
+        corrected=self.db.execute("SELECT relation_id FROM relation_events WHERE action='manual_correction' AND old_claim_key=? LIMIT 1",(key,)).fetchone()
+        if corrected:
+            return corrected['relation_id']
+        single=predicate in SINGLE_VALUE_PREDICATES or (predicate=='attribute' and property_key not in MULTI_VALUE_PROPERTIES)
+        if status=='active' and single and self.db.execute("SELECT 1 FROM relations WHERE subject_key=? AND predicate=? AND property_key=? AND claim_key<>? AND status='active' AND scope IN ('personal','semantic','episodic') LIMIT 1",(subject.casefold(),predicate,property_key,key)).fetchone():
             status='pending'
         existing=self.db.execute("SELECT * FROM relations WHERE claim_key=? ORDER BY CASE status WHEN 'deleted' THEN 0 WHEN 'superseded' THEN 1 WHEN 'active' THEN 2 ELSE 3 END,id",(key,)).fetchall()
         for row in existing:
@@ -283,13 +318,13 @@ class Memory:
         subject_id=self.entity(subject,subject_kind)
         object_id=self.entity(obj,object_kind) if obj else None
         fingerprint=hashlib.sha256((key+'|'+scope).encode('utf-8')).hexdigest()
-        if predicate in ('lives_in','works_as'):
-            other=self.db.execute("SELECT 1 FROM relations WHERE subject_key=? AND predicate=? AND claim_key<>? AND status='active' AND scope IN ('personal','semantic','episodic') LIMIT 1",(subject.casefold(),predicate,key)).fetchone()
+        if single and status=='active':
+            other=self.db.execute("SELECT 1 FROM relations WHERE subject_key=? AND predicate=? AND property_key=? AND claim_key<>? AND status='active' AND scope IN ('personal','semantic','episodic') LIMIT 1",(subject.casefold(),predicate,property_key,key)).fetchone()
             if other:
                 status='pending'
         with self.db:
-            self.db.execute('INSERT OR IGNORE INTO relations(subject_id,predicate,object_id,value,source_message_id,evidence,confidence,status,fingerprint,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)',
-                            (subject_id,predicate,object_id,value,source_id,evidence,confidence,status,fingerprint,utc_now()))
+            self.db.execute('INSERT OR IGNORE INTO relations(subject_id,predicate,property_key,object_id,value,source_message_id,evidence,confidence,status,fingerprint,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+                            (subject_id,predicate,property_key,object_id,value,source_id,evidence,confidence,status,fingerprint,utc_now()))
             relation_id=self.db.execute('SELECT id FROM relations WHERE fingerprint=?',(fingerprint,)).fetchone()['id']
             self.db.execute('UPDATE relations SET scope=?,claim_key=?,subject_key=? WHERE id=?',(scope,key,subject.casefold(),relation_id))
             self.db.execute('INSERT OR IGNORE INTO relation_sources(relation_id,message_id,evidence) VALUES(?,?,?)',(relation_id,source_id,evidence))
@@ -314,8 +349,9 @@ class Memory:
         if row['status']=='deleted' and status=='active':
             raise ValueError('Geloeschte Beziehung nicht automatisch reaktivieren')
         with self.db:
-            if status=='active' and row['predicate'] in ('lives_in','works_as'):
-                others=self.db.execute("SELECT id FROM relations WHERE subject_key=? AND predicate=? AND id<>? AND status='active'",(row['subject_key'],row['predicate'],relation_id)).fetchall()
+            single=row['predicate'] in SINGLE_VALUE_PREDICATES or (row['predicate']=='attribute' and row['property_key'] not in MULTI_VALUE_PROPERTIES)
+            if status=='active' and single:
+                others=self.db.execute("SELECT id FROM relations WHERE subject_key=? AND predicate=? AND property_key=? AND id<>? AND status='active'",(row['subject_key'],row['predicate'],row['property_key'],relation_id)).fetchall()
                 for other in others:
                     self.db.execute("UPDATE relations SET status='superseded' WHERE id=?",(other['id'],))
                     self.db.execute("INSERT INTO relation_events(relation_id,action,created_at) VALUES(?,'manual_superseded',?)",(other['id'],utc_now()))
@@ -324,6 +360,26 @@ class Memory:
                 self.db.execute("UPDATE relations SET scope='personal',confidence=1 WHERE id=?",(relation_id,))
             self.db.execute('INSERT INTO relation_events(relation_id,action,created_at) VALUES(?,?,?)',
                             (relation_id,'manual_'+status,utc_now()))
+
+    def correct_relation(self,relation_id,value):
+        value=value.strip()
+        row=self.db.execute('SELECT r.*,e.name subject FROM relations r JOIN entities e ON e.id=r.subject_id WHERE r.id=?',(relation_id,)).fetchone()
+        if not row or row['predicate']!='attribute' or row['status']=='deleted' or not value:
+            raise ValueError('Nur vorhandene, nicht gelöschte Eigenschaften mit neuem Wert korrigieren')
+        if value==row['value']:
+            return False
+        key=self.claim_key(self.canonical_subject(row['subject']),'attribute',value,row['property_key'])
+        if self.db.execute('SELECT 1 FROM relations WHERE claim_key=? AND id<>?',(key,relation_id)).fetchone():
+            raise ValueError('Dieser Eigenschaftswert existiert bereits')
+        old_key=row['claim_key']
+        stamp=utc_now()
+        with self.db:
+            self.db.execute("UPDATE relations SET value=?,claim_key=?,fingerprint=?,status='active',scope='personal',confidence=1 WHERE id=?",
+                            (value,key,hashlib.sha256((key+'|personal').encode('utf-8')).hexdigest(),relation_id))
+            self.db.execute('INSERT INTO relation_events(relation_id,action,old_value,new_value,old_claim_key,created_at) VALUES(?,?,?,?,?,?)',
+                            (relation_id,'manual_correction',row['value'],value,old_key,stamp))
+            self.index_relation(relation_id)
+        return True
 
     def recent(self, conversation_id, limit=20):
         rows = self.db.execute('SELECT role,text FROM messages WHERE conversation_id=? ORDER BY id DESC LIMIT ?',
@@ -342,13 +398,16 @@ class Memory:
         return result
 
     def source_conflicted(self,source_id):
-        return bool(self.db.execute("""SELECT 1 FROM memory_sources s JOIN memories m ON m.id=s.memory_id
+        if self.db.execute("""SELECT 1 FROM memory_sources s JOIN memories m ON m.id=s.memory_id
             WHERE s.message_id=? AND m.status IN ('active','pending') AND m.key<>'interest'
-            AND EXISTS(SELECT 1 FROM memories other WHERE other.domain=m.domain AND other.key=m.key AND other.value<>m.value AND other.status IN ('active','pending'))
-            UNION SELECT 1 FROM relation_sources s JOIN relations r ON r.id=s.relation_id
-            WHERE s.message_id=? AND r.predicate IN ('lives_in','works_as') AND r.scope IN ('personal','semantic','episodic')
-            AND EXISTS(SELECT 1 FROM relations other WHERE other.subject_key=r.subject_key AND other.predicate=r.predicate
-                AND other.claim_key<>r.claim_key AND other.status IN ('active','pending') AND other.scope IN ('personal','semantic','episodic')) LIMIT 1""",(source_id,source_id)).fetchone())
+            AND EXISTS(SELECT 1 FROM memories other WHERE other.domain=m.domain AND other.key=m.key AND other.value<>m.value AND other.status IN ('active','pending')) LIMIT 1""",(source_id,)).fetchone():
+            return True
+        for row in self.db.execute("SELECT r.* FROM relation_sources s JOIN relations r ON r.id=s.relation_id WHERE s.message_id=? AND r.scope IN ('personal','semantic','episodic')",(source_id,)):
+            single=row['predicate'] in SINGLE_VALUE_PREDICATES or (row['predicate']=='attribute' and row['property_key'] not in MULTI_VALUE_PROPERTIES)
+            if single and self.db.execute("SELECT 1 FROM relations WHERE subject_key=? AND predicate=? AND property_key=? AND claim_key<>? AND status IN ('active','pending') AND scope IN ('personal','semantic','episodic','hypothesis') LIMIT 1",
+                (row['subject_key'],row['predicate'],row['property_key'],row['claim_key'])).fetchone():
+                return True
+        return False
 
     def last_message_time(self, conversation_id=None):
         if conversation_id:
@@ -454,7 +513,10 @@ class Memory:
                   (r'dog|hund','has_dog'),(r'pet|haustier|four.legged|vierbein','has_dog has_cat'),
                   (r'cat|katze','has_cat'),(r'stud|degree|field|ausbildung|fach','studied'),
                   (r'job|work|beruf|arbeit','works_as'),(r'interest|hobb|interess|like|enjoy','likes'),
-                  (r'live|home|wohn|zuhause','lives_in'),(r'topic|discuss|talk|thema|gespräch','discussed')]
+                  (r'live|home|wohn|zuhause','lives_in'),(r'topic|discuss|talk|thema|gespräch','discussed'),
+                  (r'breed|type of (?:dog|cat|pet)|kind of (?:dog|cat|pet)|rasse','breed'),
+                  (r'how old|\bage\b|alter','age'),(r'gender|male|female|boy|girl|geschlecht','gender'),
+                  (r'personality|temperament|character|charakter|wesen','trait')]
         for pattern,predicates in mappings:
             if re.search(pattern,query,re.I):
                 words.extend(predicates.split())
@@ -498,7 +560,7 @@ class Memory:
             if ids:
                 markers=','.join('?' for _ in ids)
                 for row in self.db.execute(f"""SELECT r.*,s.name subject,s.kind subject_kind,o.name object,o.kind object_kind,m.text source_text,m.role source_role,
-                    EXISTS(SELECT 1 FROM relation_events e WHERE e.relation_id=r.id AND e.action='manual_active') manual
+                    EXISTS(SELECT 1 FROM relation_events e WHERE e.relation_id=r.id AND e.action IN ('manual_active','manual_correction')) manual
                     FROM relations r JOIN entities s ON s.id=r.subject_id LEFT JOIN entities o ON o.id=r.object_id
                     JOIN messages m ON m.id=r.source_message_id WHERE r.id IN ({markers}) AND r.status='active'
                     AND s.status='active' AND (o.id IS NULL OR o.status='active')""",list(ids)):
@@ -551,20 +613,23 @@ class Memory:
             if subject=='USER' and row['predicate']=='related_to' and target.casefold() in self.speaker_names():
                 continue
             # Keep both a person's anchor and their connected attributes available.
-            line=json.dumps({'subject':subject,'relation':row['predicate'],'target':target,'source':row['source_message_id']},ensure_ascii=False,separators=(',',':'))
+            if row['predicate']=='attribute':
+                line=json.dumps({'subject':subject,'property':row['property_key'],'value':target,'source':row['source_message_id']},ensure_ascii=False,separators=(',',':'))
+            else:
+                line=json.dumps({'subject':subject,'relation':row['property_key'] or row['predicate'],'target':target,'source':row['source_message_id']},ensure_ascii=False,separators=(',',':'))
             score=max(ids[row['id']],90 if row['subject_id'] in focused or row['object_id'] in focused else 0)
             candidates.append((score,line,'relation:'+str(row['id'])))
         if frontier:
             markers=','.join('?' for _ in frontier)
             guards=set()
             for row in self.db.execute(f"SELECT r.*,s.name subject FROM relations r JOIN entities s ON s.id=r.subject_id WHERE r.subject_id IN ({markers}) AND r.status IN ('pending','fictional') ORDER BY r.id DESC LIMIT 32",list(frontier)):
-                if row['predicate'] not in words:
+                if row['predicate'] not in words and row['property_key'] not in words:
                     continue
-                slot=(row['subject_key'],row['predicate'])
-                if slot in guards or any((known['subject_key'],known['predicate'])==slot for known in rows_by_id.values()):
+                slot=(row['subject_key'],row['predicate'],row['property_key'])
+                if slot in guards or any((known['subject_key'],known['predicate'],known['property_key'])==slot for known in rows_by_id.values()):
                     continue
                 guards.add(slot)
-                line=json.dumps({'constraint':'not established or disputed','subject':self.canonical_subject(row['subject']),'relation':row['predicate']},ensure_ascii=False,separators=(',',':'))
+                line=json.dumps({'constraint':'not established or disputed','subject':self.canonical_subject(row['subject']),'relation':row['property_key'] or row['predicate']},ensure_ascii=False,separators=(',',':'))
                 candidates.append((95,line,'constraint:'+str(row['id'])))
         output=[];used=0;chosen=[]
         for _score,line,ident in sorted(candidates,key=lambda item:-item[0]):
@@ -577,14 +642,15 @@ class Memory:
     def relation_is_confirmed(self,row):
         if row['source_role']!='user' or row['confidence']<.8 or row['scope'] not in ('personal','semantic','episodic'):
             return False
-        if self.source_blocked(row['source_message_id']):
+        if self.source_blocked(row['source_message_id']) and not row['manual']:
             return False
         if not row['manual'] and any(source_flags(row['source_text'])):
             return False
         if self.db.execute("SELECT 1 FROM relations WHERE claim_key=? AND status IN ('deleted','superseded') LIMIT 1",(row['claim_key'],)).fetchone():
             return False
-        if row['predicate'] in ('lives_in','works_as'):
-            conflict=self.db.execute("SELECT 1 FROM relations WHERE subject_key=? AND predicate=? AND claim_key<>? AND status IN ('active','pending') AND scope IN ('personal','semantic','episodic') AND confidence>=.8 LIMIT 1",(row['subject_key'],row['predicate'],row['claim_key'])).fetchone()
+        single=row['predicate'] in SINGLE_VALUE_PREDICATES or (row['predicate']=='attribute' and row['property_key'] not in MULTI_VALUE_PROPERTIES)
+        if single:
+            conflict=self.db.execute("SELECT 1 FROM relations WHERE subject_key=? AND predicate=? AND property_key=? AND claim_key<>? AND status IN ('active','pending') AND scope IN ('personal','semantic','episodic','hypothesis') AND confidence>=.8 LIMIT 1",(row['subject_key'],row['predicate'],row['property_key'],row['claim_key'])).fetchone()
             if conflict:
                 return False
         return True

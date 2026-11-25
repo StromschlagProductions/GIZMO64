@@ -10,6 +10,33 @@ from version import VERSION, SCHEMA_VERSION
 
 
 class UpgradeTest(unittest.TestCase):
+    def test_schema_five_to_six_preserves_archive_and_requeues_analysis(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path=Path(temporary)/'memory.sqlite3'
+            with closing(sqlite3.connect(path)) as old:
+                old.executescript(SCHEMA)
+                old.execute("INSERT INTO conversations VALUES('synthetic','2026-01-01',NULL)")
+                old.execute("INSERT INTO messages VALUES(1,'synthetic','user','My dog is Lucy.','2026-01-01')")
+                old.execute("INSERT INTO analysis_jobs(message_id,status,created_at,updated_at) VALUES(1,'done','2026-01-01','2026-01-01')")
+                old.execute('DROP TABLE relation_fts')
+                old.execute('CREATE VIRTUAL TABLE relation_fts USING fts5(subject,predicate,target,evidence)')
+                old.execute('DROP INDEX relations_property_slot') if old.execute("SELECT 1 FROM sqlite_master WHERE name='relations_property_slot'").fetchone() else None
+                old.execute('ALTER TABLE relations DROP COLUMN property_key')
+                old.execute('ALTER TABLE relation_events DROP COLUMN old_value')
+                old.execute('ALTER TABLE relation_events DROP COLUMN new_value')
+                old.execute('ALTER TABLE relation_events DROP COLUMN old_claim_key')
+                old.execute("INSERT INTO lab_metadata VALUES('app_version','0.4.1')")
+                old.execute("INSERT INTO lab_metadata VALUES('analysis_revision','0.3.2')")
+                old.execute('PRAGMA user_version=5')
+                old.commit()
+            upgraded=Memory(path)
+            try:
+                self.assertIn('property_key',[row['name'] for row in upgraded.db.execute('PRAGMA table_info(relations)')])
+                self.assertIn('property',[row['name'] for row in upgraded.db.execute('PRAGMA table_info(relation_fts)')])
+                self.assertEqual(upgraded.job_counts(),{'pending':1})
+                self.assertEqual(upgraded.db.execute('SELECT text FROM messages').fetchone()[0],'My dog is Lucy.')
+                self.assertEqual(len(list(path.parent.glob('*.bak'))),1)
+            finally:upgraded.close()
     def test_v031_relation_columns_and_search_backfill_preserve_original_rows(self):
         with tempfile.TemporaryDirectory() as temporary:
             path=Path(temporary)/'memory.sqlite3'
@@ -19,7 +46,7 @@ class UpgradeTest(unittest.TestCase):
                 old.execute("INSERT INTO messages VALUES(1,'synthetic','user','My dog is Milo.','2026-01-01')")
                 old.execute("INSERT INTO entities VALUES(1,'USER','person','active','2026-01-01')")
                 old.execute("INSERT INTO entities VALUES(2,'Milo','pet','active','2026-01-01')")
-                old.execute("INSERT INTO relations VALUES(1,1,'has_dog',2,'',1,'My dog is Milo.',.95,'active','legacy-fingerprint','2026-01-01')")
+                old.execute("INSERT INTO relations(id,subject_id,predicate,object_id,value,source_message_id,evidence,confidence,status,fingerprint,created_at) VALUES(1,1,'has_dog',2,'',1,'My dog is Milo.',.95,'active','legacy-fingerprint','2026-01-01')")
                 old.execute("INSERT INTO relation_sources VALUES(1,1,'My dog is Milo.')")
                 old.execute("INSERT INTO lab_metadata VALUES('app_version','0.3.1')")
                 old.execute("INSERT INTO lab_metadata VALUES('analysis_revision','0.3.1')")

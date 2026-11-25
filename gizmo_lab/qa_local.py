@@ -76,8 +76,9 @@ def real_gemma(folder):
             durations.append(analyzer.last_duration_s)
         relations=lab.memory.list_relations()
         for predicate,obj,status in [('has_sister','Emma','active'),('studied','psycholog','active'),
-                                     ('has_dog','Milo','active'),('lives_in','Berlin','pending'),('lives_in','Mars','fictional')]:
-            assert any(r['predicate']==predicate and obj.casefold() in (r['object'] or r['value'] or '').casefold() and r['status']==status for r in relations),(predicate,obj,status,relations)
+                                     ('has_dog','Milo','active'),('location','Berlin','pending'),('location','Mars','fictional')]:
+            assert any((r['predicate']==predicate or r['property_key']==predicate or (predicate=='location' and r['predicate']=='lives_in'))
+                and obj.casefold() in (r['object'] or r['value'] or '').casefold() and r['status']==status for r in relations),(predicate,obj,status,relations)
         assert lab.memory.job_counts()=={'done':6},lab.memory.job_counts()
         # Exercise the real retry path on synthetic jobs, without repeating successful jobs.
         source=lab.memory.add_message(lab.memory.conversation(),'user','Mein Hund heißt Milo.')
@@ -214,6 +215,8 @@ def main():
             real_gemma(folder)
             from active_memory_qa import run as active_memory_acceptance
             active_memory_acceptance(folder)
+            from flexible_memory_qa import run as flexible_memory_acceptance
+            flexible_memory_acceptance(folder)
             installed_launcher_check(folder)
             control_center_check(folder)
         print(f'[+] Lokale QA bestanden. Synthetische Berichte: {folder}',flush=True)
