@@ -6,6 +6,37 @@ from pathlib import Path
 from gizmo_lab import Lab, run_benchmark, should_quit, DEFAULT_MODEL
 
 class LabTest(unittest.TestCase):
+    def test_full_synthetic_awakening_profile_is_first_system_message(self):
+        with tempfile.TemporaryDirectory() as folder:
+            data=Path(folder)
+            profile='\nYou are synthetic GIZMO. Keep your own dry wit.\n\n'
+            path=data/'GIZMO_Awakening_V2_EN.txt'
+            path.write_text(profile,encoding='utf-8')
+            payloads=[]
+            def opener(request,timeout):
+                payloads.append(json.loads(request.data))
+                return io.BytesIO(b'{"message":{"content":"Hello."}}\n{"done":true}\n')
+            lab=Lab(data=data,opener=opener)
+            try:
+                self.assertIsNone(lab.personality_warning)
+                self.assertEqual(lab.personality_path,path.resolve())
+                lab.chat('Hello?',context=[])
+                self.assertEqual(payloads[0]['messages'][0],{'role':'system','content':profile})
+                self.assertTrue(all(message['role']=='system' for message in payloads[0]['messages'][:3]))
+            finally:
+                lab.memory.close()
+
+    def test_missing_profile_reports_actual_fallback_path(self):
+        with tempfile.TemporaryDirectory() as folder:
+            data=Path(folder)
+            lab=Lab(data=data)
+            try:
+                self.assertEqual(lab.personality_path,(Path(__file__).resolve().parent/'personality.example.txt').resolve())
+                self.assertIn('GIZMO_Awakening_V2_EN.txt',lab.personality_warning)
+                self.assertIn(str(lab.personality_path),lab.personality_warning)
+            finally:
+                lab.memory.close()
+
     def test_q_is_normal_text_and_reference_model(self):
         self.assertFalse(should_quit('Q'))
         self.assertFalse(should_quit('Warum?'))

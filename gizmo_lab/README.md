@@ -1,4 +1,6 @@
-# GIZMO Control Center 0.1 // LAB 0.4.0
+# GIZMO Control Center 0.1 // LAB 0.4.1
+
+MODEL LAB setzt den Fokus beim Öffnen und nach Antworten auf die Eingabe. ENTER sendet; während der Generierung kann die nächste Nachricht geschrieben und per ENTER eingereiht werden. Der Verlauf folgt neuen Textstücken nur, wenn er zuvor am Ende stand. SETTINGS zeigt Namen und vollständigen Pfad der tatsächlich geladenen Persönlichkeitsdatei und warnt ausdrücklich, wenn das englische Awakening-Profil fehlt. Profiltexte werden unverändert als erste Systemnachricht übergeben; Zeitkontext und lokale Gedächtnisregeln folgen als zusätzliche Systemnachrichten.
 
 Die Windows-Anwendung startet mit `GIZMO.cmd` als grafische technische Schaltzentrale. Das dunkle Instrumentenlayout orientiert sich an der bereitgestellten Designvorlage. Angezeigte Zustände und Zahlen stammen aus der laufenden LAB-Engine, SQLite und `nvidia-smi`; nicht verbundene C64-/Story-Komponenten werden ausdrücklich markiert. START CORE lädt das vorhandene Modell, MODEL LAB bietet Streaming-Dialog und Modellwechsel, SETTINGS speichert Parameter und ein ausdrücklich gewähltes Profil lokal, ARCHIVE zeigt Erinnerungen, Entitäten, Beziehungen und Jobs. Löschungen und Korrekturen erfordern Bestätigung. SHUTDOWN und Fensterschließen führen die Studio-Safe-Abschaltung aus. `GIZMO-Terminal.cmd` hält den bisherigen Diagnosemodus bereit.
 

@@ -46,11 +46,21 @@ class Lab:
     def __init__(self, config=None, data=None, opener=None, runner=None, personality_file=None):
         self.data = Path(data) if data else private_dir()
         self.config = config or load_config(self.data)
-        personality = Path(personality_file) if personality_file else (self.data / 'GIZMO_Awakening_V2_EN.txt' if (self.data / 'GIZMO_Awakening_V2_EN.txt').exists() else self.data / 'personality.txt')
-        if personality_file and not personality.is_file():
-            raise FileNotFoundError(f'Persoenlichkeitsprofil fehlt: {personality}')
-        self.personality = (personality if personality.exists() else ROOT / 'personality.example.txt').read_text(encoding='utf-8').strip()
-        self.personality_path = personality
+        expected = Path(personality_file) if personality_file else self.data / 'GIZMO_Awakening_V2_EN.txt'
+        if personality_file and not expected.is_file():
+            raise FileNotFoundError(f'Persoenlichkeitsprofil fehlt: {expected}')
+        if expected.is_file():
+            personality=expected
+            self.personality_warning=None
+        elif (self.data/'personality.txt').is_file():
+            personality=self.data/'personality.txt'
+            self.personality_warning=f'Englisches Profil fehlt: {expected}. Aktiv: {personality}.'
+        else:
+            personality=ROOT/'personality.example.txt'
+            self.personality_warning=f'Persönlichkeitsprofil fehlt: {expected}. Nur mitgelieferte Standardpersönlichkeit aktiv: {personality}.'
+        self.personality = personality.read_text(encoding='utf-8')
+        self.personality_path = personality.resolve()
+        self.expected_personality_path = expected.resolve()
         self.profile_sha256 = hashlib.sha256(self.personality.encode('utf-8')).hexdigest()
         self.opener = opener or urllib.request.urlopen
         self.runner = runner or subprocess.run
@@ -381,8 +391,9 @@ def run_gui(screenshot=None, qa_report=None):
     if sys.stdout is None:sys.stdout=open(diagnostic,'a',encoding='utf-8')
     if sys.stderr is None:sys.stderr=open(diagnostic,'a',encoding='utf-8')
     from PySide6.QtCore import Qt, QTimer, Signal, QObject, QProcess, QUrl
-    from PySide6.QtGui import QColor, QPainter, QPen
+    from PySide6.QtGui import QColor, QPainter, QPen, QTextCursor
     from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
+    from PySide6.QtTest import QTest
     from PySide6.QtWidgets import (QApplication, QWidget, QMainWindow, QVBoxLayout, QHBoxLayout,
         QLabel, QPushButton, QFrame, QStackedWidget, QTextEdit, QLineEdit, QComboBox,
         QGridLayout, QMessageBox, QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView,
@@ -437,6 +448,7 @@ def run_gui(screenshot=None, qa_report=None):
         def __init__(self):
             super().__init__(); self.lab=None; self.busy=False; self.closing=False
             self.last_error=None
+            self.pending_prompts=[]
             self.shutdown_requested=threading.Event()
             self.thread=None; self.task=None; self.last_speed=None; self.last_time=None
             self.setWindowTitle('GIZMO // CENTRAL INTELLIGENCE CORE'); self.resize(850,960)
@@ -502,6 +514,7 @@ def run_gui(screenshot=None, qa_report=None):
             page=QWidget();layout=QVBoxLayout(page);layout.setSpacing(10);header=QHBoxLayout();back=QPushButton('← CONTROL CENTER');back.clicked.connect(lambda:self.pages.setCurrentIndex(0));header.addWidget(back);header.addStretch();header.addWidget(self.label(title,'value'));layout.addLayout(header);self.pages.addWidget(page);return layout
         def build_model_page(self):
             layout=self.page('MODEL LAB');self.chat_view=QTextEdit();self.chat_view.setReadOnly(True);layout.addWidget(self.chat_view,1)
+            self.chat_view.setFocusPolicy(Qt.NoFocus)
             row=QHBoxLayout();self.model_select=QComboBox();self.model_select.setEditable(True);self.model_select.addItem(DEFAULT_MODEL)
             self.model_button=QPushButton('LOAD MODEL');self.model_button.clicked.connect(self.switch_model)
             row.addWidget(self.model_select,1);row.addWidget(self.model_button);layout.addLayout(row)
@@ -516,7 +529,12 @@ def run_gui(screenshot=None, qa_report=None):
                 spin=QSpinBox();spin.setRange(minimum,maximum);self.settings_fields[key]=spin;form.addRow(key.upper(),spin)
             self.settings_fields['seed'].setMinimum(-1)
             self.settings_fields['seed'].setSpecialValueText('AUTO')
-            layout.addLayout(form);self.profile_path=self.label('Profile: default','dim');layout.addWidget(self.profile_path)
+            layout.addLayout(form);self.profile_path=self.label('ACTIVE PROFILE // CORE OFFLINE','dim')
+            self.profile_path.setWordWrap(True);self.profile_path.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            layout.addWidget(self.profile_path)
+            self.profile_warning=self.label('','dim');self.profile_warning.setWordWrap(True)
+            self.profile_warning.setStyleSheet('color:#edc27b;font-weight:bold')
+            layout.addWidget(self.profile_warning)
             profile_button=QPushButton('SELECT PERSONALITY FILE…');profile_button.clicked.connect(self.select_profile);layout.addWidget(profile_button)
             save=QPushButton('SAVE SETTINGS');save.clicked.connect(self.save_settings);layout.addWidget(save);layout.addStretch()
             layout.addWidget(self.label('Saved locally. Changes to model parameters take effect on the next request.','dim'))
@@ -538,7 +556,7 @@ def run_gui(screenshot=None, qa_report=None):
         def set_busy(self,busy,activity='IDLE'):
             self.busy=busy;self.activity.setText(activity);self.pulse.active=busy or bool(self.lab and self.lab.model);self.graph.active=busy
             self.start_button.setEnabled(not busy and not self.lab);self.send_button.setEnabled(not busy and bool(self.lab and self.lab.model))
-            self.model_button.setEnabled(not busy and bool(self.lab));self.prompt.setEnabled(not busy and bool(self.lab and self.lab.model))
+            self.model_button.setEnabled(not busy and bool(self.lab));self.prompt.setEnabled(bool(self.lab and self.lab.model) and not self.closing)
             if busy or not self.last_error:self.chat_status.setText(activity)
         def work(self,action,activity,on_done=None):
             if self.busy:return
@@ -568,6 +586,10 @@ def run_gui(screenshot=None, qa_report=None):
             if getattr(self,'close_after_shutdown',False) and self.lab is None and not self.closing:
                 QTimer.singleShot(0,self.close)
             elif self.lab is None and not self.closing:self.shutdown_requested.clear()
+            if self.pages.currentIndex()==1 and self.lab and self.lab.model and not self.closing:
+                QTimer.singleShot(0,self.focus_prompt)
+            if self.pending_prompts and self.lab and self.lab.model and not self.closing:
+                QTimer.singleShot(0,self.send_queued)
         def start_core(self):
             def action(_emit):
                 lab=Lab();self.lab=lab
@@ -584,20 +606,54 @@ def run_gui(screenshot=None, qa_report=None):
                 self.model_select.clear();self.model_select.addItems(result['installed'])
                 self.model_select.setCurrentText(result['active'])
                 self.log_line('MODEL READY // '+result['active'])
+                self.show_profile()
+                if self.lab.personality_warning:
+                    self.log_line('PROFILE WARNING // '+self.lab.personality_warning)
+                    if not qa_report:QMessageBox.warning(self,'Personality profile missing',self.lab.personality_warning)
             self.work(action,'INITIALIZING CORE',done)
         def send(self):
             prompt=self.prompt.text().strip()
-            if not prompt or not self.lab or self.busy:return
-            self.prompt.clear();self.chat_view.append('<span style="color:#e5c681">YOU &gt; '+self.escape(prompt)+'</span>')
-            self.chat_view.append('<span style="color:#a9dec0">GIZMO &gt; </span>')
-            def stream(chunk):self.chat_view.insertPlainText(chunk);self.chat_view.ensureCursorVisible()
+            if not prompt or not self.lab or not self.lab.model:return
+            if self.busy:
+                if self.activity.text()=='GENERATING RESPONSE':
+                    self.pending_prompts.append(prompt)
+                    self.prompt.clear()
+                    self.log_line('MESSAGE QUEUED')
+                    self.focus_prompt()
+                return
+            self.prompt.clear();self.send_prompt(prompt)
+        def send_queued(self):
+            if self.busy or not self.pending_prompts or not self.lab or self.closing:return
+            self.send_prompt(self.pending_prompts.pop(0))
+        def focus_prompt(self):
+            if self.pages.currentIndex()==1 and self.prompt.isEnabled() and not self.closing:
+                self.prompt.setFocus(Qt.OtherFocusReason)
+        def append_chat(self,action):
+            bar=self.chat_view.verticalScrollBar()
+            follow=bar.value()>=bar.maximum()-3
+            position=bar.value()
+            action()
+            bar.setValue(bar.maximum() if follow else position)
+        def send_prompt(self,prompt):
+            self.append_chat(lambda:self.chat_view.append('<span style="color:#e5c681">YOU &gt; '+self.escape(prompt)+'</span>'))
+            self.append_chat(lambda:self.chat_view.append('<span style="color:#a9dec0">GIZMO &gt; </span>'))
+            self.focus_prompt()
+            def stream(chunk):
+                def insert():
+                    cursor=self.chat_view.textCursor()
+                    cursor.movePosition(QTextCursor.End)
+                    cursor.insertText(chunk)
+                    self.chat_view.setTextCursor(cursor)
+                self.append_chat(insert)
             def done(result):
-                self.chat_view.append('');self.last_speed=result['tokens_per_s'];self.last_time=result['total_s']
+                self.append_chat(lambda:self.chat_view.append(''))
+                self.last_speed=result['tokens_per_s'];self.last_time=result['total_s']
                 self.log_line(f"RESPONSE // {result['total_s']:.2f}s // {result['tokens_per_s']:.1f} t/s // {result['abort_reason']}")
                 if result['abort_reason']!='completed' and not self.shutdown_requested.is_set():
                     self.last_error=result['abort_reason']
                     self.chat_status.setText('GENERATION ERROR // '+result['abort_reason'])
                     if not qa_report:QMessageBox.warning(self,'Generation failed',result['abort_reason'])
+                self.focus_prompt()
             self.work(lambda emit:self.lab.chat(prompt,on_text=emit),'GENERATING RESPONSE',done)
             self.task.chunk.connect(stream)
         @staticmethod
@@ -618,15 +674,26 @@ def run_gui(screenshot=None, qa_report=None):
                         QMessageBox.warning(self,'GIZMO','Model loaded, but the selection could not be saved: '+str(error))
                     self.log_line('ACTIVE MODEL // '+model)
                 self.work(lambda _emit:self.lab.switch_model(model),'LOADING MODEL '+model,done)
-        def open_model(self):self.pages.setCurrentIndex(1)
+        def open_model(self):
+            self.pages.setCurrentIndex(1)
+            self.focus_prompt()
+            QTimer.singleShot(0,self.focus_prompt)
         def open_settings(self):
             if self.lab:
                 for key,field in self.settings_fields.items():
                     value=self.lab.config.get(key)
                     number=-1 if key=='seed' and value is None else (value or 0)
                     field.setValue(int(number) if isinstance(field,QSpinBox) else float(number))
-                self.profile_path.setText('Profile: '+self.lab.profile_sha256[:16]+'… (active)')
+            self.show_profile()
             self.pages.setCurrentIndex(2)
+        def show_profile(self):
+            if not self.lab:
+                self.profile_path.setText('ACTIVE PROFILE // CORE OFFLINE')
+                self.profile_warning.setText('')
+                return
+            path=self.lab.personality_path
+            self.profile_path.setText('ACTIVE PROFILE // '+path.name+'\n'+str(path))
+            self.profile_warning.setText('WARNING // '+self.lab.personality_warning if self.lab.personality_warning else '')
         def select_profile(self):
             filename,_=QFileDialog.getOpenFileName(self,'Select local personality profile','','Text files (*.txt);;All files (*)')
             if filename:self.selected_profile=filename;self.profile_path.setText('Selected: '+Path(filename).name)
@@ -640,12 +707,18 @@ def run_gui(screenshot=None, qa_report=None):
                 if QMessageBox.question(self,'Confirm profile change','Replace the active local personality profile with the selected file?')!=QMessageBox.Yes:return
                 source=Path(self.selected_profile);content=source.read_text(encoding='utf-8')
                 target=self.lab.personality_path
+                if not target.is_relative_to(self.lab.data.resolve()):
+                    target=self.lab.data/'personality.txt'
                 if target.exists():
                     import shutil
                     shutil.copy2(target,target.with_name(target.name+'.'+datetime.now().strftime('%Y%m%d-%H%M%S')+'.bak'))
                 target.write_text(content,encoding='utf-8')
-                self.lab.personality=content.strip();self.lab.profile_sha256=hashlib.sha256(self.lab.personality.encode()).hexdigest()
+                self.lab.personality=content;self.lab.personality_path=target.resolve()
+                self.lab.personality_warning=(f'Englisches Profil fehlt: {self.lab.expected_personality_path}. Aktiv: {target}.'
+                    if not self.lab.expected_personality_path.is_file() and target!=self.lab.expected_personality_path else None)
+                self.lab.profile_sha256=hashlib.sha256(self.lab.personality.encode()).hexdigest()
                 self.selected_profile=None
+                self.show_profile()
             self.persist_config(config)
             self.lab.config=config;self.log_line('SETTINGS SAVED LOCALLY')
         def persist_config(self,config):
@@ -789,27 +862,56 @@ def run_gui(screenshot=None, qa_report=None):
                 report['checks']['ui_responsive']=window.isVisible() and window.pulse.timer.isActive() and state['busy_ticks']>=2
                 report['checks']['real_status']=window.indicators['model'].text()==DEFAULT_MODEL
                 window.open_settings();report['checks']['settings_page']=window.pages.currentIndex()==2 and window.settings_fields['num_ctx'].value()>0
+                report['checks']['active_profile_path_in_settings']='GIZMO_Awakening_V2_EN.txt' in window.profile_path.text() and not window.profile_warning.text()
+                previous_warning=window.lab.personality_warning
+                window.lab.personality_warning='SYNTHETIC PROFILE MISSING'
+                window.show_profile()
+                report['checks']['missing_profile_warning_in_settings']='SYNTHETIC PROFILE MISSING' in window.profile_warning.text()
+                window.lab.personality_warning=previous_warning
+                window.show_profile()
                 window.open_archive();report['checks']['archive_page']=window.pages.currentIndex()==3 and 'jobs' in window.tables
                 window.pages.setCurrentIndex(0)
                 if screenshot:window.grab().save(str(screenshot))
-                window.open_model();window.prompt.setText('My dog is Milo.');window.send()
+                window.open_model()
+                report['checks']['focus_on_open']=window.prompt.hasFocus()
+                for number in range(80):window.chat_view.append(f'SYNTHETIC SCROLL ROW {number}')
+                window.prompt.setText('My dog is Milo.');QTest.keyClick(window.prompt,Qt.Key_Return)
+                report['checks']['enter_sends']=window.busy and window.prompt.text()==''
                 window.task.chunk.connect(lambda _text:report.__setitem__('stream_chunks',report['stream_chunks']+1))
                 state['phase']='first';state['at']=time.monotonic()
+            elif phase=='first' and window.busy and not state.get('draft_typed'):
+                QTest.keyClicks(window.prompt,'Draft retained during streaming')
+                report['checks']['focus_during_stream']=window.prompt.hasFocus()
+                report['checks']['typing_during_stream']=window.prompt.text()=='Draft retained during streaming'
+                window.chat_view.verticalScrollBar().setValue(0)
+                state['draft_typed']=True
             elif phase=='first' and not window.busy:
                 state['first_answer']=window.chat_view.toPlainText()
                 report['checks']['streaming']=report['stream_chunks']>1
                 report['checks']['first_response']='GIZMO >' in state['first_answer']
+                report['checks']['draft_preserved']=window.prompt.text()=='Draft retained during streaming'
+                report['checks']['focus_after_answer']=window.prompt.hasFocus()
+                report['checks']['scroll_position_preserved']=window.chat_view.verticalScrollBar().value()==0
+                window.prompt.clear()
                 state['phase']='analysis';state['at']=time.monotonic()
             elif phase=='analysis':
                 counts=window.lab.memory.job_counts()
                 if counts.get('pending',0)==0 and counts.get('processing',0)==0:
                     report['checks']['memory_processing']=counts.get('done',0)>0
-                    window.prompt.setText("What's my dog's name?");window.send()
+                    bar=window.chat_view.verticalScrollBar();bar.setValue(bar.maximum())
+                    window.prompt.setText("What's my dog's name?");QTest.keyClick(window.prompt,Qt.Key_Return)
                     state['phase']='recall';state['at']=time.monotonic()
-            elif phase=='recall' and not window.busy:
+            elif phase=='recall' and window.busy and not state.get('queued'):
+                window.prompt.setText('Say hello briefly.');QTest.keyClick(window.prompt,Qt.Key_Return)
+                report['checks']['enter_queues_next']=len(window.pending_prompts)==1 and window.prompt.text()==''
+                state['queued']=True;state['phase']='queued';state['at']=time.monotonic()
+            elif phase=='queued' and not window.busy:
                 answer=window.chat_view.toPlainText()[len(state['first_answer']):]
                 report['answer']=answer[-500:]
                 report['checks']['gemma_memory_recall']='milo' in answer.lower()
+                report['checks']['queued_message_sent']='YOU > Say hello briefly.' in answer and not window.pending_prompts
+                bar=window.chat_view.verticalScrollBar()
+                report['checks']['auto_follow_latest']=bar.value()>=bar.maximum()-3
                 window.prompt.setText('Write a long technical essay about vacuum tube computers, at least 1000 words.');window.send()
                 state['phase']='interrupt';state['at']=time.monotonic()
             elif phase=='interrupt' and window.busy and time.monotonic()-state['at']>.7:
@@ -850,6 +952,8 @@ def main():
     if args.gui:
         return run_gui(args.screenshot,args.gui_qa_report)
     lab = Lab(personality_file=args.personality)
+    if lab.personality_warning:
+        print('[!] '+lab.personality_warning,flush=True)
     def stop_signal(_signal, _frame):
         lab.stop()
         raise KeyboardInterrupt

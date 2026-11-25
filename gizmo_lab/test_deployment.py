@@ -44,7 +44,8 @@ class DeploymentTest(unittest.TestCase):
             root=base/'production'
             data=base/'synthetic-private'
             data.mkdir()
-            sentinels={'config.json':b'custom-config','personality.txt':b'custom-profile','memory.sqlite3':b'private-sentinel'}
+            sentinels={'config.json':b'custom-config','personality.txt':b'custom-profile',
+                       'GIZMO_Awakening_V2_EN.txt':b'synthetic-english-profile','memory.sqlite3':b'private-sentinel'}
             for name,value in sentinels.items():
                 (data/name).write_bytes(value)
             with patch.object(deploy,'git_run',return_value='git version test'):

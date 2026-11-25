@@ -153,9 +153,12 @@ def control_center_check(folder):
     import deployment
     destination=folder/'control-center'
     destination.mkdir()
+    data=destination/'synthetic-data'
+    data.mkdir()
+    (data/'GIZMO_Awakening_V2_EN.txt').write_text((ROOT/'qa_personality.en.txt').read_text(encoding='utf-8'),encoding='utf-8')
     root=destination/'installation'
     git=shutil.which('git') or str(ROOT.parent/'.local-tools/git/cmd/git.exe')
-    deployment.install(root,ROOT,git,destination/'synthetic-data')
+    deployment.install(root,ROOT,git,data)
     settings=json.loads((root/'installation.json').read_text(encoding='utf-8'))
     settings['python']=sys.executable
     deployment.atomic_json(root/'installation.json',settings)
