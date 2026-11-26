@@ -269,5 +269,10 @@ class Analyzer:
 
     def loop(self):
         while not self.stop_event.is_set():
-            if self.pause_event.is_set() or not self.analyze_one():
+            if self.pause_event.is_set():
+                self.stop_event.wait(.25)
+                continue
+            if self.analyze_one():
+                continue
+            if self.pause_event.is_set() or self.stop_event.is_set() or not self.memory.index_next_embedding():
                 self.stop_event.wait(.25)

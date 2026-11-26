@@ -219,6 +219,8 @@ def main():
             flexible_memory_acceptance(folder)
             from memory_diagnostics_qa import run as diagnostics_acceptance
             diagnostics_acceptance(folder)
+            subprocess.run([sys.executable,str(ROOT/'hybrid_memory_qa.py'),str(folder/'hybrid-memory')],
+                           check=True,timeout=600)
             installed_launcher_check(folder)
             control_center_check(folder)
         print(f'[+] Lokale QA bestanden. Synthetische Berichte: {folder}',flush=True)

@@ -1,4 +1,6 @@
-# GIZMO Control Center 0.1 // LAB 0.4.1
+# GIZMO Control Center 0.1 // LAB 0.5.0
+
+LAB 0.5.0 ergänzt den strukturierten Gedächtnisabruf um eine unabhängige Suche in den ursprünglichen Nutzernachrichten. SQLite FTS5 und das lokal installierte CPU-Embedding-Modell `multilingual-e5-small` suchen gemeinsam mit dem Wissensgraphen. Der Index wird nach Gesprächsanalyse schrittweise aufgebaut und nach einem Neustart fortgesetzt. Gelöschte, korrigierte, strittige und fiktionale Quellen bleiben vom Originalabruf ausgeschlossen. Technische Details und Messungen stehen im Repositorydokument `HYBRID-MEMORY.md`.
 
 MODEL LAB setzt den Fokus beim Öffnen und nach Antworten auf die Eingabe. ENTER sendet; während der Generierung kann die nächste Nachricht geschrieben und per ENTER eingereiht werden. Der Verlauf folgt neuen Textstücken nur, wenn er zuvor am Ende stand. SETTINGS zeigt Namen und vollständigen Pfad der tatsächlich geladenen Persönlichkeitsdatei und warnt ausdrücklich, wenn das englische Awakening-Profil fehlt. Profiltexte werden unverändert als erste Systemnachricht übergeben; Zeitkontext und lokale Gedächtnisregeln folgen als zusätzliche Systemnachrichten.
 

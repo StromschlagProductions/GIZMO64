@@ -10,6 +10,40 @@ from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 from version import VERSION, SCHEMA_VERSION, ANALYSIS_REVISION
+E5_MODEL_ID='intfloat/multilingual-e5-small@761b726-int8'
+
+
+def e5_directory():
+    override=__import__('os').environ.get('GIZMO_E5_DIR')
+    if override:return Path(override)
+    code=Path(__file__).resolve().parent
+    candidates=(code.parent/'.local-tools'/'embedding-e5',code.parent.parent/'models'/'embedding-e5')
+    return next((path for path in candidates if (path/'onnx'/'model_int8.onnx').is_file()),candidates[0])
+
+
+class CpuE5:
+    def __init__(self,folder=None):
+        import onnxruntime as ort
+        from tokenizers import Tokenizer
+        self.folder=Path(folder or e5_directory())
+        self.tokenizer=Tokenizer.from_file(str(self.folder/'tokenizer.json'))
+        self.tokenizer.enable_truncation(max_length=512)
+        self.session=ort.InferenceSession(str(self.folder/'onnx'/'model_int8.onnx'),providers=['CPUExecutionProvider'])
+        if self.session.get_providers()!=['CPUExecutionProvider']:
+            raise RuntimeError('Embedding must run on CPU only')
+
+    def embed(self,text,kind):
+        import numpy as np
+        if kind not in ('query','passage'):raise ValueError(kind)
+        encoded=self.tokenizer.encode(kind+': '+text)
+        inputs={'input_ids':np.asarray([encoded.ids],dtype=np.int64),
+                'attention_mask':np.asarray([encoded.attention_mask],dtype=np.int64),
+                'token_type_ids':np.asarray([encoded.type_ids],dtype=np.int64)}
+        hidden=self.session.run(None,inputs)[0][0]
+        mask=inputs['attention_mask'][0].astype(np.float32)
+        vector=(hidden*mask[:,None]).sum(axis=0)/max(1,mask.sum())
+        vector=vector/max(float(np.linalg.norm(vector)),1e-12)
+        return vector.astype(np.float32)
 class ContextBudgetError(RuntimeError):
     pass
 
@@ -46,7 +80,9 @@ MEMORY_POLICY = (
     'Do not invent missing details or claim to recall facts absent from memory or the conversation. '
     'Do not turn guesses, disputed claims or fiction in the conversation into real biography. '
     'An earlier assistant answer is not evidence. Ask a follow-up only when it is needed. '
-    'If information was deleted or corrected, do not reconstruct it from earlier dialogue.'
+    'If information was deleted or corrected, do not reconstruct it from earlier dialogue. '
+    'Original user quotes are evidence when extraction missed a fact; interpret them in context, '
+    'but do not treat a question or an unconfirmed statement as a confirmed fact.'
 )
 
 
@@ -62,7 +98,7 @@ def assemble_context(personality, clock, prompt, history, retrieve, config):
     fixed_cost=sum(map(message_cost,fixed))+message_cost(current)
     if output<=0 or available<=fixed_cost:
         raise ContextBudgetError('Persönlichkeit und aktuelle Nachricht überschreiten das sichere Kontextbudget. Bitte Nachricht kürzen oder num_ctx erhöhen; nichts wurde abgeschnitten.')
-    header='Local memory: fact/relation entries are confirmed. Constraint entries are NOT established facts. Source IDs are provenance:\n'
+    header='Local memory: fact/relation entries are confirmed. Original user quotes are source evidence, not extracted facts; interpret only explicit statements. Constraint entries are NOT established facts. Source IDs are provenance:\n'
     memory_budget=max(0,min(int(config.get('memory_token_budget',900)),available-fixed_cost-token_bound(header)-32))
     memories,retrieval_s=retrieve(prompt,memory_budget,history[-8:])
     memory_message={'role':'system','content':header+'\n'.join(memories)}
@@ -113,11 +149,17 @@ CREATE TABLE IF NOT EXISTS relations(id INTEGER PRIMARY KEY, subject_id INTEGER 
 CREATE TABLE IF NOT EXISTS relation_sources(relation_id INTEGER NOT NULL, message_id INTEGER NOT NULL, evidence TEXT NOT NULL, PRIMARY KEY(relation_id,message_id), FOREIGN KEY(relation_id) REFERENCES relations(id), FOREIGN KEY(message_id) REFERENCES messages(id));
 CREATE TABLE IF NOT EXISTS relation_events(id INTEGER PRIMARY KEY, relation_id INTEGER NOT NULL, action TEXT NOT NULL, old_value TEXT, new_value TEXT, old_claim_key TEXT, created_at TEXT NOT NULL, FOREIGN KEY(relation_id) REFERENCES relations(id));
 CREATE TABLE IF NOT EXISTS analysis_jobs(id INTEGER PRIMARY KEY, message_id INTEGER NOT NULL UNIQUE, status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, error TEXT, claim_count INTEGER, rejected_count INTEGER, empty_reason TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(message_id) REFERENCES messages(id));
+CREATE TABLE IF NOT EXISTS embedding_jobs(message_id INTEGER PRIMARY KEY, status TEXT NOT NULL DEFAULT 'pending', error TEXT, FOREIGN KEY(message_id) REFERENCES messages(id));
+CREATE TABLE IF NOT EXISTS message_vectors(message_id INTEGER PRIMARY KEY, model_id TEXT NOT NULL, content_hash TEXT NOT NULL, dimensions INTEGER NOT NULL, vector BLOB NOT NULL, FOREIGN KEY(message_id) REFERENCES messages(id));
 CREATE INDEX IF NOT EXISTS memories_domain_key ON memories(domain,key,status);
 CREATE INDEX IF NOT EXISTS relations_subject ON relations(subject_id,predicate,status);
 CREATE INDEX IF NOT EXISTS memory_sources_message ON memory_sources(message_id);
 CREATE INDEX IF NOT EXISTS relation_sources_message ON relation_sources(message_id);
 CREATE VIRTUAL TABLE IF NOT EXISTS relation_fts USING fts5(subject,predicate,property,target,evidence);
+CREATE VIRTUAL TABLE IF NOT EXISTS message_fts USING fts5(text,content='messages',content_rowid='id');
+CREATE TRIGGER IF NOT EXISTS message_ai AFTER INSERT ON messages WHEN new.role='user' BEGIN INSERT INTO message_fts(rowid,text) VALUES(new.id,new.text); INSERT OR IGNORE INTO embedding_jobs(message_id) VALUES(new.id); END;
+CREATE TRIGGER IF NOT EXISTS message_ad AFTER DELETE ON messages WHEN old.role='user' BEGIN INSERT INTO message_fts(message_fts,rowid,text) VALUES('delete',old.id,old.text); DELETE FROM embedding_jobs WHERE message_id=old.id; DELETE FROM message_vectors WHERE message_id=old.id; END;
+CREATE TRIGGER IF NOT EXISTS message_au AFTER UPDATE OF text ON messages WHEN old.role='user' BEGIN INSERT INTO message_fts(message_fts,rowid,text) VALUES('delete',old.id,old.text); INSERT INTO message_fts(rowid,text) VALUES(new.id,new.text); INSERT INTO embedding_jobs(message_id,status,error) VALUES(new.id,'pending',NULL) ON CONFLICT(message_id) DO UPDATE SET status='pending',error=NULL; DELETE FROM message_vectors WHERE message_id=new.id; END;
 CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(key,value,content='memories',content_rowid='id');
 CREATE TRIGGER IF NOT EXISTS memory_ai AFTER INSERT ON memories BEGIN INSERT INTO memory_fts(rowid,key,value) VALUES(new.id,new.key,new.value); END;
 CREATE TRIGGER IF NOT EXISTS memory_ad AFTER DELETE ON memories BEGIN INSERT INTO memory_fts(memory_fts,rowid,key,value) VALUES('delete',old.id,old.key,old.value); END;
@@ -132,6 +174,11 @@ def utc_now():
 class Memory:
     def __init__(self, path, recover_processing=True):
         self.path = Path(path).resolve()
+        schema_version=0
+        self.embedding=None
+        self.embedding_error=None
+        self._vector_cache=None
+        self._vector_cache_version=None
         self.path.parent.mkdir(parents=True, exist_ok=True)
         if self.path.exists():
             with closing(sqlite3.connect(self.path.as_uri()+'?mode=ro',uri=True)) as probe:
@@ -172,6 +219,9 @@ class Memory:
         self.db.execute('CREATE INDEX IF NOT EXISTS relations_property_slot ON relations(subject_key,predicate,property_key,status)')
         self.db.execute('CREATE INDEX IF NOT EXISTS relation_corrections_old_key ON relation_events(old_claim_key)')
         with self.db:
+            if schema_version<8:
+                self.db.execute("INSERT INTO message_fts(message_fts) VALUES('rebuild')")
+                self.db.execute("INSERT OR IGNORE INTO embedding_jobs(message_id) SELECT id FROM messages WHERE role='user'")
             revision=self.db.execute("SELECT value FROM lab_metadata WHERE key='analysis_revision'").fetchone()
             self.retried_jobs=0
             self.reindexed_jobs=0
@@ -227,6 +277,53 @@ class Memory:
 
     def job_counts(self):
         return {row['status']:row['count'] for row in self.db.execute('SELECT status,COUNT(*) count FROM analysis_jobs GROUP BY status')}
+
+    def embedding_status(self):
+        counts={row['status']:row['n'] for row in self.db.execute('SELECT status,COUNT(*) n FROM embedding_jobs GROUP BY status')}
+        counts['model_ready']=(e5_directory()/'onnx'/'model_int8.onnx').is_file()
+        counts['error']=self.embedding_error
+        return counts
+
+    def embedding_engine(self):
+        if self.embedding_error:return None
+        if self.embedding is None:
+            try:self.embedding=CpuE5()
+            except Exception as error:self.embedding_error=str(error)[:180];return None
+        return self.embedding
+
+    def index_next_embedding(self):
+        engine=self.embedding_engine()
+        if engine is None:return False
+        row=self.db.execute("SELECT j.message_id,m.text FROM embedding_jobs j JOIN messages m ON m.id=j.message_id WHERE j.status='pending' ORDER BY j.message_id LIMIT 1").fetchone()
+        if not row:return False
+        try:
+            vector=engine.embed(row['text'],'passage')
+            digest=hashlib.sha256(row['text'].encode('utf-8')).hexdigest()
+            with self.db:
+                self.db.execute('INSERT OR REPLACE INTO message_vectors(message_id,model_id,content_hash,dimensions,vector) VALUES(?,?,?,?,?)',
+                    (row['message_id'],E5_MODEL_ID,digest,len(vector),vector.tobytes()))
+                self.db.execute("UPDATE embedding_jobs SET status='done',error=NULL WHERE message_id=?",(row['message_id'],))
+            self._vector_cache=None
+        except Exception as error:
+            with self.db:self.db.execute("UPDATE embedding_jobs SET status='failed',error=? WHERE message_id=?",(str(error)[:180],row['message_id']))
+        return True
+
+    def vector_matches(self,query,limit=40):
+        engine=self.embedding_engine()
+        if engine is None:return []
+        import numpy as np
+        version=self.db.execute('PRAGMA data_version').fetchone()[0]
+        count=self.db.execute('SELECT COUNT(*) FROM message_vectors WHERE model_id=?',(E5_MODEL_ID,)).fetchone()[0]
+        marker=(version,count)
+        if self._vector_cache_version!=marker:
+            rows=self.db.execute('SELECT message_id,vector FROM message_vectors WHERE model_id=? AND dimensions=384 ORDER BY message_id',(E5_MODEL_ID,)).fetchall()
+            self._vector_cache=([row['message_id'] for row in rows],np.stack([np.frombuffer(row['vector'],dtype=np.float32) for row in rows]) if rows else None)
+            self._vector_cache_version=marker
+        ids,vectors=self._vector_cache
+        if vectors is None:return []
+        scores=vectors@engine.embed(query,'query')
+        order=np.argsort(scores)[::-1][:limit]
+        return [(ids[int(index)],float(scores[index])) for index in order if scores[index]>=.72]
 
     def analysis_summary(self):
         counts=self.job_counts()
@@ -549,6 +646,55 @@ class Memory:
                 found.append(self.add_memory('personal',key,value,source_id,.9,importance))
         return found
 
+    def archive_matches(self,query,words,limit=24):
+        """Rank original user messages independently of extracted claims."""
+        scores={}
+        expression=' OR '.join('"'+word.replace('"','')+'"' for word in dict.fromkeys(words[:20]))
+        if expression:
+            try:
+                for rank,row in enumerate(self.db.execute("""SELECT f.rowid FROM message_fts f
+                    JOIN messages m ON m.id=f.rowid WHERE message_fts MATCH ? AND m.role='user'
+                    ORDER BY bm25(message_fts) LIMIT 40""",(expression,))):
+                    scores[row[0]]=scores.get(row[0],0)+1/(60+rank)
+            except sqlite3.OperationalError:
+                pass
+        try:
+            for rank,(ident,similarity) in enumerate(self.vector_matches(query,40)):
+                scores[ident]=scores.get(ident,0)+1/(60+rank)
+        except Exception as error:
+            self.embedding_error=str(error)[:180]
+        candidates=sorted(scores,key=lambda ident:-scores[ident])[:limit]
+        if not candidates:return []
+        marks=','.join('?' for _ in candidates)
+        rows={row['id']:row for row in self.db.execute(f"SELECT id,conversation_id,text FROM messages WHERE role='user' AND id IN ({marks})",candidates)}
+        result=[]
+        for ident in candidates:
+            row=rows.get(ident)
+            if row and self.original_source_safe(ident,row['text']):
+                result.append((ident,row['conversation_id'],row['text'],scores[ident]))
+        return result
+
+    def original_source_safe(self,ident,text):
+        if self.source_blocked(ident) or self.source_conflicted(ident) or any(source_flags(text)):
+            return False
+        if '?' in text or len(text)>800:
+            return False
+        if self.db.execute("SELECT 1 FROM relations WHERE source_message_id=? AND status IN ('pending','fictional','deleted','superseded') LIMIT 1",(ident,)).fetchone():
+            return False
+        if self.db.execute("SELECT 1 FROM memories WHERE source_message_id=? AND status IN ('pending','deleted','superseded') LIMIT 1",(ident,)).fetchone():
+            return False
+        if self.db.execute("""SELECT 1 FROM relation_sources s JOIN relations r ON r.id=s.relation_id
+            WHERE s.message_id=? AND (r.status IN ('pending','fictional','deleted','superseded') OR
+            EXISTS(SELECT 1 FROM relation_events e WHERE e.relation_id=r.id AND e.action='manual_correction')) LIMIT 1""",(ident,)).fetchone():
+            return False
+        lower=text.casefold()
+        for event in self.db.execute("""SELECT e.old_value,s.name subject FROM relation_events e
+            JOIN relations r ON r.id=e.relation_id JOIN entities s ON s.id=r.subject_id
+            WHERE e.action='manual_correction' AND e.old_value IS NOT NULL"""):
+            if event['old_value'].casefold() in lower and event['subject'].casefold() in lower:
+                return False
+        return True
+
     def retrieve(self, query, budget=900, recent_context=None):
         started=time.perf_counter()
         excluded=[]
@@ -681,6 +827,39 @@ class Memory:
                 line=json.dumps({'subject':subject,'relation':row['property_key'] or row['predicate'],'target':target,'source':row['source_message_id']},ensure_ascii=False,separators=(',',':'))
             score=max(ids[row['id']],90 if row['subject_id'] in focused or row['object_id'] in focused else 0)
             candidates.append((score,line,'relation:'+str(row['id'])))
+        # Evidence from the original archive is a separate fallback when the
+        # extractor omitted a fact. Keep adjacent user turns for pronouns.
+        archive=self.archive_matches(query,words)
+        archive_ids=set()
+        raw_role_evidence=False
+        role_terms={'has_sister':'sister|schwester','has_brother':'brother|bruder',
+                    'has_mother':'mother|mutter','has_father':'father|vater',
+                    'has_dog':'dog|hund','has_cat':'cat|katze'}
+        requested='|'.join(role_terms[name] for name in role_queries)
+        role_pattern=r'\b(?:'+requested+r')\b' if requested else None
+        for ident,conversation_id,text,rank in archive[:12]:
+            related=self.db.execute("""SELECT id,text FROM messages WHERE conversation_id=? AND role='user'
+                AND id BETWEEN ? AND ? ORDER BY ABS(id-?) LIMIT 5""",(conversation_id,ident-3,ident+3,ident)).fetchall()
+            if role_queries and not anchored:
+                anchors=[row for row in related if self.original_source_safe(row['id'],row['text']) and
+                    re.search(role_pattern,row['text'],re.I)]
+                if not anchors:continue
+                if not re.search(role_pattern,text,re.I) and not re.match(r'\s*(she|he|her|his|they|their|sie|er|ihr|ihre)\b',text,re.I):
+                    continue
+                raw_role_evidence=True
+            for source_id,body,bonus in [(ident,text,0)]:
+                if source_id in archive_ids:continue
+                archive_ids.add(source_id)
+                line=json.dumps({'original_user_quote':body,'source':source_id},ensure_ascii=False,separators=(',',':'))
+                candidates.append((75+min(10,int(rank*200))+bonus,line,'archive:'+str(source_id)))
+            for neighbor in related[:3]:
+                if neighbor['id'] in archive_ids or not self.original_source_safe(neighbor['id'],neighbor['text']):continue
+                if role_queries and not anchored and not re.search(role_pattern,neighbor['text'],re.I) and not re.match(r'\s*(she|he|her|his|they|their|sie|er|ihr|ihre)\b',neighbor['text'],re.I):continue
+                archive_ids.add(neighbor['id'])
+                line=json.dumps({'original_user_quote':neighbor['text'],'source':neighbor['id']},ensure_ascii=False,separators=(',',':'))
+                candidates.append((68,line,'archive:'+str(neighbor['id'])))
+        if raw_role_evidence:
+            candidates=[item for item in candidates if not item[2].startswith('constraint:has_')]
         if frontier:
             markers=','.join('?' for _ in frontier)
             guards=set()

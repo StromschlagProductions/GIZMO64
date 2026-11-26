@@ -748,7 +748,7 @@ def run_gui(screenshot=None, qa_report=None):
             if not self.lab or self.busy:return
             memory=self.lab.memory
             summary=memory.analysis_summary()
-            self.archive_summary.setText(self.format_analysis_summary(summary))
+            self.archive_summary.setText(self.format_analysis_summary(summary)+'\n'+self.format_embedding_summary(memory.embedding_status()))
             if self.archive_tabs.currentIndex()>=len(self.tables):
                 self.refresh_inspector();self.archive_data_version=memory.db.execute('PRAGMA data_version').fetchone()[0];return
             key=list(self.tables)[self.archive_tabs.currentIndex()]
@@ -778,6 +778,11 @@ def run_gui(screenshot=None, qa_report=None):
             return ('ANALYSIS // PENDING {pending}  PROCESSING {processing}  COMPLETED {done}  FAILED {failed}\n'
                     'UNRESOLVED CLAIMS {unresolved}  COMPLETED WITHOUT CLAIMS {empty}').format(**{
                         key:counts.get(key,0) for key in ('pending','processing','done','failed','unresolved','empty')})
+        @staticmethod
+        def format_embedding_summary(counts):
+            state='CPU READY' if counts.get('model_ready') and not counts.get('error') else 'UNAVAILABLE'
+            return ('ORIGINAL ARCHIVE // FTS READY  E5 '+state+'  INDEXED '+str(counts.get('done',0))+
+                    '  PENDING '+str(counts.get('pending',0))+'  FAILED '+str(counts.get('failed',0)))
         def refresh_inspector(self):
             if not self.lab:return
             diagnostics=self.lab.last_diagnostics
@@ -845,7 +850,7 @@ def run_gui(screenshot=None, qa_report=None):
                     self.metrics['memories'].setText(str(self.lab.memory.db.execute("SELECT (SELECT COUNT(*) FROM memories WHERE status='active')+(SELECT COUNT(*) FROM relations WHERE status='active')").fetchone()[0]))
                     summary=self.lab.memory.analysis_summary()
                     self.metrics['jobs'].setText(str(summary.get('pending',0)))
-                    self.analysis_status.setText(self.format_analysis_summary(summary))
+                    self.analysis_status.setText(self.format_analysis_summary(summary)+'\n'+self.format_embedding_summary(self.lab.memory.embedding_status()))
                 except Exception:self.metrics['memories'].setText('—');self.metrics['jobs'].setText('—')
             else:
                 self.metrics['memories'].setText('—');self.metrics['jobs'].setText('—')
