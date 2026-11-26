@@ -1,3 +1,5 @@
 {
-  "model": "richardyoung/qwen2.5-7b-instruct-abliterated:latest"
+  "uplink_enabled": false,
+  "uplink_host": "auto",
+  "uplink_port": 6464
 }

@@ -140,7 +140,7 @@ def source_flags(text):
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS lab_metadata(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS conversations(id TEXT PRIMARY KEY, started_at TEXT NOT NULL, ended_at TEXT);
-CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY, conversation_id TEXT NOT NULL, role TEXT NOT NULL, text TEXT NOT NULL, created_at TEXT NOT NULL, FOREIGN KEY(conversation_id) REFERENCES conversations(id));
+CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY, conversation_id TEXT NOT NULL, role TEXT NOT NULL, text TEXT NOT NULL, created_at TEXT NOT NULL, origin TEXT NOT NULL DEFAULT 'legacy', FOREIGN KEY(conversation_id) REFERENCES conversations(id));
 CREATE INDEX IF NOT EXISTS messages_conversation ON messages(conversation_id,id);
 CREATE TABLE IF NOT EXISTS memories(id INTEGER PRIMARY KEY, domain TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, confidence REAL NOT NULL, importance INTEGER NOT NULL DEFAULT 1, source_message_id INTEGER, status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(source_message_id) REFERENCES messages(id));
 CREATE TABLE IF NOT EXISTS memory_events(id INTEGER PRIMARY KEY, memory_id INTEGER NOT NULL, action TEXT NOT NULL, old_value TEXT, new_value TEXT, created_at TEXT NOT NULL, FOREIGN KEY(memory_id) REFERENCES memories(id));
@@ -226,6 +226,8 @@ class Memory:
         episode_columns={row['name'] for row in self.db.execute('PRAGMA table_info(episodes)')}
         for column,definition in [('topics',"TEXT NOT NULL DEFAULT ''"),('significance','TEXT')]:
             if column not in episode_columns:self.db.execute(f'ALTER TABLE episodes ADD COLUMN {column} {definition}')
+        message_columns={row['name'] for row in self.db.execute('PRAGMA table_info(messages)')}
+        if 'origin' not in message_columns:self.db.execute("ALTER TABLE messages ADD COLUMN origin TEXT NOT NULL DEFAULT 'legacy'")
         fts_columns={row['name'] for row in self.db.execute('PRAGMA table_info(relation_fts)')}
         if 'property' not in fts_columns:
             self.db.execute('DROP TABLE relation_fts')
@@ -284,10 +286,10 @@ class Memory:
         row = self.db.execute('SELECT id FROM conversations ORDER BY started_at DESC,rowid DESC LIMIT 1').fetchone()
         return row['id'] if row else None
 
-    def add_message(self, conversation_id, role, text):
+    def add_message(self, conversation_id, role, text, origin='legacy'):
         with self.db:
-            cur = self.db.execute('INSERT INTO messages(conversation_id,role,text,created_at) VALUES(?,?,?,?)',
-                                  (conversation_id, role, text, utc_now()))
+            cur = self.db.execute('INSERT INTO messages(conversation_id,role,text,created_at,origin) VALUES(?,?,?,?,?)',
+                                  (conversation_id, role, text, utc_now(),origin))
         return cur.lastrowid
 
     def enqueue(self, message_id):

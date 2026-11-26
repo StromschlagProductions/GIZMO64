@@ -28,6 +28,9 @@ test:
 package: all
 	python3 tools/package.py
 
+package-022: all
+	python3 tools/package_022.py
+
 HOSTCC ?= cc
 
-.PHONY: all clean test verify-prg package
+.PHONY: all clean test verify-prg package package-022

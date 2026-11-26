@@ -223,6 +223,8 @@ def main():
                            check=True,timeout=600)
             subprocess.run([sys.executable,str(ROOT/'episodic_memory_qa.py'),str(folder/'episodic-memory')],
                            check=True,timeout=600)
+            subprocess.run([sys.executable,str(ROOT/'uplink_qa.py'),str(folder/'uplink')],
+                           check=True,timeout=600)
             installed_launcher_check(folder)
             control_center_check(folder)
         print(f'[+] Lokale QA bestanden. Synthetische Berichte: {folder}',flush=True)

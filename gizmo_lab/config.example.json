@@ -12,5 +12,8 @@
   "num_predict": 768,
   "seed": null,
   "keep_alive": -1,
-  "think": false
+  "think": false,
+  "uplink_enabled": false,
+  "uplink_host": "auto",
+  "uplink_port": 6464
 }

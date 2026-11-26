@@ -1,5 +1,9 @@
 # GIZMO-64
 
+## Aktuell: LAB 0.7.0 / C64-Uplink 04A
+
+Das PC-Control-Center und das originale C64-PRG 0.2.2 benutzen dieselbe LAB-Engine, dasselbe Modell, Persönlichkeitsprofil und lokale Gedächtnisdatenbank. `GIZMO.cmd` startet das Control Center; der C64-Uplink wird einmalig unter SETTINGS aktiviert und startet danach mit START CORE. Der alte eigenständige Bridge-Starter startet keine zweite Engine mehr. Die [04A-Anleitung und Hardwareabnahme](docs/04A-C64-HARDWARE-ABNAHME.md) beschreibt den einfachen Start und die noch offene Ultimate-Prüfung. Die folgenden Abschnitte dokumentieren ältere C64-Versionen und deren damalige Bridge.
+
 GIZMO-64 ist ein nativer C64-Ultimate-Client mit einer lokalen Python-TCP-Brücke zu Ollama. Version 0.2.1 ergänzt gestreamte, längere Antworten, eine ausgearbeitete Persönlichkeit und einen eigenen 5×7-Zeichensatz. Der hardwaregetestete Stand 0.1.2 ist als Git-Tag `v0.1.2` gesichert.
 
 Die [Kurzanleitung 0.2.1](docs/kurzanleitung-0.2.1.md) beschreibt Installation und Bedienung. [Technik und VICE-Prüfung](docs/personality-typography.md) dokumentieren Zeichensatz, Speicherkarte, Kodierung und Grenzen.

@@ -1,9 +1,11 @@
 """Lokales GIZMO-LAB: Terminalgespräche und reproduzierbare Ollama-Benchmarks."""
 import argparse
 import hashlib
+import ipaddress
 import json
 import os
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -42,6 +44,188 @@ def should_quit(prompt):
     return prompt.strip().lower() in ('/quit', '/exit') or '\x1b' in prompt
 
 
+UPLINK_BEGIN='[[GIZMO:BEGIN]]'
+UPLINK_PARA='[[GIZMO:PARA]]'
+UPLINK_END='[[GIZMO:END]]'
+
+
+def c64_records(text):
+    """Display-only conversion; never used for the canonical archive."""
+    import re
+    import unicodedata
+    text=re.sub(r'<think\b[^>]*>.*?</think\s*>','',text,flags=re.I|re.S)
+    text=re.sub(r'<think\b[^>]*>.*\Z','',text,flags=re.I|re.S)
+    text=re.sub(r'</think\s*>','',text,flags=re.I)
+    text=re.sub(r'\[([^\]]+)\]\([^)]*\)',r'\1',text)
+    text=re.sub(r'(?m)^\s{0,3}(?:#{1,6}\s+|[-*]\s+|>\s+)','',text)
+    text=text.replace('```','').replace('**','').replace('__','').replace('`','')
+    text=text.replace('—',' - ').replace('–',' - ').replace('’',"'").replace('“','"').replace('”','"')
+    for original,replacement in (('Ä','Ae'),('Ö','Oe'),('Ü','Ue'),('ä','ae'),('ö','oe'),('ü','ue'),('ß','ss')):
+        text=text.replace(original,replacement)
+    text=unicodedata.normalize('NFKD',text).encode('ascii','ignore').decode('ascii')
+    text=re.sub(r'[\x00-\x08\x0b-\x1f\x7f]','',text)
+    lines=[]
+    for paragraph in re.split(r'\n\s*\n',text):
+        if lines:lines.append(UPLINK_PARA)
+        current=''
+        for word in paragraph.split():
+            for part in (word[i:i+31] for i in range(0,len(word),31)):
+                if len(current)+len(part)+bool(current)>31:
+                    lines.append(current);current=''
+                current=(current+' '+part).strip()
+        if current:lines.append(current)
+    return lines or ['SIGNAL EMPFANGEN. KEIN TEXT.']
+
+
+def uplink_bind_host(configured):
+    if configured=='auto':
+        candidates={item[4][0] for item in socket.getaddrinfo(socket.gethostname(),None,family=socket.AF_INET,type=socket.SOCK_STREAM)}
+        private=[address for address in candidates if ipaddress.ip_address(address).is_private and not ipaddress.ip_address(address).is_loopback]
+        if len(private)!=1:raise RuntimeError('LAN-Adresse nicht eindeutig; Uplink-Host in SETTINGS angeben')
+        return private[0]
+    address=ipaddress.ip_address(configured)
+    if address.version!=4 or not address.is_private:raise ValueError('Uplink darf nur an eine private IPv4-Adresse gebunden werden')
+    return str(address)
+
+
+class Uplink:
+    """0.2.2 stop-and-wait transport for the one LAB instance."""
+    def __init__(self,lab,host='auto',port=6464):
+        self.lab=lab;self.host=host;self.port=int(port)
+        self.ack_timeout=120
+        self.bind_host=None;self.error=None;self.state='disabled';self.running=False
+        self.clients=set();self.workers=set();self.listener=None;self.thread=None
+        self.stop_event=threading.Event();self.lock=threading.Lock();self.request_lock=threading.Lock()
+        self.connections=0;self.last_disconnect=None
+
+    def status(self):
+        with self.lock:
+            return {'state':self.state,'host':self.bind_host,'port':self.port,'connections':self.connections,
+                    'clients':len(self.clients),'last_disconnect':self.last_disconnect,'error':self.error}
+
+    def start(self):
+        if self.running:return True
+        try:
+            if not 1<=self.port<=65535:raise ValueError('Ungültiger Uplink-Port')
+            self.bind_host=uplink_bind_host(self.host)
+            server=socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+            try:
+                if hasattr(socket,'SO_EXCLUSIVEADDRUSE'):
+                    server.setsockopt(socket.SOL_SOCKET,socket.SO_EXCLUSIVEADDRUSE,1)
+                else:server.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
+                server.bind((self.bind_host,self.port));server.listen(2);server.settimeout(.25)
+            except BaseException:
+                server.close();raise
+            with self.lock:
+                self.listener=server;self.state='listening';self.error=None;self.running=True
+            self.thread=threading.Thread(target=self.serve,daemon=True,name='gizmo-uplink')
+            self.thread.start()
+            return True
+        except (OSError,ValueError,RuntimeError) as error:
+            with self.lock:self.state='error';self.error=str(error)[:180];self.running=False
+            return False
+
+    def stop(self):
+        self.stop_event.set()
+        with self.lock:
+            server=self.listener;self.listener=None
+            clients=list(self.clients)
+            self.running=False;self.state='disabled'
+        if server:server.close()
+        for client in clients:
+            try:client.shutdown(socket.SHUT_RDWR)
+            except OSError:pass
+            client.close()
+        if self.thread and self.thread is not threading.current_thread():self.thread.join(timeout=1)
+        for worker in list(self.workers):
+            if worker is not threading.current_thread():worker.join(timeout=1)
+
+    def serve(self):
+        server=self.listener
+        while not self.stop_event.is_set():
+            try:client,_address=server.accept()
+            except socket.timeout:continue
+            except OSError:
+                if not self.stop_event.is_set():
+                    with self.lock:self.state='error';self.error='Listener nicht verfügbar'
+                break
+            client.settimeout(1)
+            with self.lock:
+                self.clients.add(client);self.connections+=1;self.state='connected'
+            worker=threading.Thread(target=self.handle,args=(client,),daemon=True,name='gizmo-c64-client')
+            with self.lock:self.workers.add(worker)
+            worker.start()
+
+    def send(self,client,text):
+        client.sendall((text+'\r\n').encode('ascii'))
+
+    def send_acked(self,client,text):
+        self.send(client,text)
+        previous=client.gettimeout();client.settimeout(self.ack_timeout)
+        try:
+            reply=bytearray()
+            while not self.stop_event.is_set() and not self.lab.stop_event.is_set():
+                char=client.recv(1)
+                if not char:raise ConnectionError('C64 getrennt')
+                if char in (b'\r',b'\n'):
+                    if reply:
+                        if reply!=b'ACK':raise RuntimeError('C64-ACK ungültig')
+                        return
+                elif len(reply)<32:reply.extend(char)
+                else:raise RuntimeError('C64-ACK zu lang')
+            raise ConnectionError('Uplink wird beendet')
+        finally:client.settimeout(previous)
+
+    def answer(self,client,prompt):
+        with self.request_lock:
+            try:
+                self.send_acked(client,UPLINK_BEGIN)
+                visible='';sent=0
+                def stream(chunk):
+                    nonlocal visible,sent
+                    visible+=chunk
+                    records=c64_records(visible)
+                    for record in records[sent:-1]:
+                        self.send_acked(client,record);sent+=1
+                result=self.lab.chat(prompt,on_text=stream,origin='c64')
+                if result['abort_reason']=='completed':
+                    for record in c64_records(visible)[sent:]:self.send_acked(client,record)
+                else:self.send_acked(client,'ANTWORT UNTERBROCHEN.')
+                self.send_acked(client,UPLINK_END)
+                return True
+            except (OSError,ConnectionError,RuntimeError,ValueError):
+                # ACK loss/disconnect never replays this user request.
+                return False
+
+    def handle(self,client):
+        buffer=bytearray()
+        try:
+            self.send(client,'UPLINK HERGESTELLT. GIZMO ONLINE.')
+            while not self.stop_event.is_set() and not self.lab.stop_event.is_set():
+                try:data=client.recv(512)
+                except socket.timeout:continue
+                if not data:break
+                for byte in data:
+                    if byte in (10,13):
+                        if not buffer:continue
+                        command=buffer.decode('ascii','replace').strip();buffer.clear()
+                        if command.upper()=='PING':self.send(client,'PONG // GIZMO UPLINK AKTIV')
+                        elif command.upper()=='STATUS':
+                            count=self.lab.memory.db.execute("SELECT (SELECT COUNT(*) FROM memories WHERE status='active')+(SELECT COUNT(*) FROM relations WHERE status='active')").fetchone()[0]
+                            self.send(client,f'FACTS: {min(count,255)}')
+                        elif command and not self.answer(client,command):return
+                    elif len(buffer)<256:buffer.append(byte)
+                    else:buffer.clear();self.send(client,'EINGABE ZU LANG')
+        except OSError:pass
+        finally:
+            with self.lock:
+                self.clients.discard(client);self.workers.discard(threading.current_thread())
+                if not self.stop_event.is_set():
+                    self.state='connected' if self.clients else 'disconnected'
+                    self.last_disconnect=datetime.now().isoformat(timespec='seconds')
+            client.close()
+
+
 class Lab:
     def __init__(self, config=None, data=None, opener=None, runner=None, personality_file=None):
         self.data = Path(data) if data else private_dir()
@@ -68,11 +252,13 @@ class Lab:
         self.chat_done = threading.Event()
         self.chat_done.set()
         self.lock = threading.RLock()
+        self.chat_lock = threading.Lock()
         self.process = None
         self.active_response = None
         self.context = []
         self.memory = Memory(self.data / 'memory.sqlite3')
         self.analyzer = None
+        self.uplink = None
         self.previous_message_at = self.memory.last_message_time()
         self.session_started = utc_now()
         self.conversation_id = self.memory.conversation(self.memory.latest_conversation())
@@ -120,6 +306,18 @@ class Lab:
         self.preload(self.config.get('model', DEFAULT_MODEL))
         self.analyzer = Analyzer(self.memory.path,self.config,self.opener)
         self.analyzer.start()
+        if self.config.get('uplink_enabled'):
+            self.start_uplink()
+
+    def start_uplink(self):
+        if self.uplink and self.uplink.running:return self.uplink
+        self.uplink=Uplink(self,host=self.config.get('uplink_host','auto'),port=int(self.config.get('uplink_port',6464)))
+        self.uplink.start()
+        return self.uplink
+
+    def stop_uplink(self):
+        if self.uplink:self.uplink.stop()
+        self.uplink=None
 
     def preload(self, model):
         if self.stop_event.is_set():
@@ -156,29 +354,25 @@ class Lab:
             self.model = None
 
     def switch_model(self, model):
-        if self.analyzer:
-            self.analyzer.pause()
-        try:
-            if model == self.model:
-                return
-            if self.model:
-                self.unload(self.model)
-            self.preload(model)
-            self.config['model']=model
-        finally:
-            if self.analyzer:self.analyzer.resume()
+        with self.chat_lock:
+            if self.analyzer:self.analyzer.pause()
+            try:
+                if model == self.model:return
+                if self.model:self.unload(self.model)
+                self.preload(model)
+                self.config['model']=model
+            finally:
+                if self.analyzer:self.analyzer.resume()
 
-    def chat(self, prompt, context=None, on_text=None, model=None):
-        with self.lock:
-            if self.stop_event.is_set():
-                raise RuntimeError('GIZMO LAB wird beendet')
-            self.chat_done.clear()
-        try:
-            return self._chat(prompt,context,on_text,model)
-        finally:
-            self.chat_done.set()
+    def chat(self, prompt, context=None, on_text=None, model=None, origin='terminal'):
+        with self.chat_lock:
+            with self.lock:
+                if self.stop_event.is_set():raise RuntimeError('GIZMO LAB wird beendet')
+                self.chat_done.clear()
+            try:return self._chat(prompt,context,on_text,model,origin)
+            finally:self.chat_done.set()
 
-    def _chat(self, prompt, context=None, on_text=None, model=None):
+    def _chat(self, prompt, context=None, on_text=None, model=None, origin='terminal'):
         if self.analyzer:
             self.analyzer.pause()
         model = model or self.model or self.config.get('model', DEFAULT_MODEL)
@@ -195,7 +389,7 @@ class Lab:
         self.last_diagnostics = {'messages':messages,'retrieved':retrieved,'retrieval_s':retrieval_s,
                                  'context_chars':sum(len(message['content']) for message in messages),'budget':budget,
                                  'memory_selection':getattr(self.memory,'last_retrieval',{})}
-        source_id = self.memory.add_message(self.conversation_id,'user',prompt) if context is None else None
+        source_id = self.memory.add_message(self.conversation_id,'user',prompt,origin=origin) if context is None else None
         options = {key: self.config[key] for key in OPTIONS if self.config.get(key) is not None}
         options.setdefault('num_ctx',8192)
         options.setdefault('num_predict',768)
@@ -266,7 +460,7 @@ class Lab:
         extraction_s = 0
         if context is None:
             if text and aborted=='completed':
-                self.memory.add_message(self.conversation_id,'assistant',text)
+                self.memory.add_message(self.conversation_id,'assistant',text,origin=origin)
             extraction_started=time.perf_counter()
             self.memory.extract_user(prompt,source_id)
             self.memory.enqueue(source_id)
@@ -290,6 +484,7 @@ class Lab:
             if self.stop_event.is_set():
                 return
             self.stop_event.set()
+            if self.uplink:self.uplink.stop()
             if self.analyzer:
                 self.analyzer.stop()
             response = self.active_response
@@ -395,7 +590,7 @@ def run_gui(screenshot=None, qa_report=None):
     from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import (QApplication, QWidget, QMainWindow, QVBoxLayout, QHBoxLayout,
-        QLabel, QPushButton, QFrame, QStackedWidget, QTextEdit, QLineEdit, QComboBox,
+        QLabel, QPushButton, QFrame, QStackedWidget, QTextEdit, QLineEdit, QComboBox, QCheckBox,
         QGridLayout, QMessageBox, QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView,
         QFormLayout, QDoubleSpinBox, QSpinBox, QFileDialog, QInputDialog)
 
@@ -480,6 +675,7 @@ def run_gui(screenshot=None, qa_report=None):
                 box=self.panel();lay=QVBoxLayout(box);lay.addWidget(self.label(title,'dim'));value=self.label('OFFLINE','value');lay.addWidget(value)
                 self.indicators[key]=value;grid.addWidget(box,index//2,index%2)
             home.addLayout(grid)
+            self.uplink_detail=self.label('UPLINK // DISABLED','dim');self.uplink_detail.setWordWrap(True);home.addWidget(self.uplink_detail)
             monitor=self.panel();ml=QVBoxLayout(monitor);top=QHBoxLayout();top.addWidget(self.label('NEURAL ACTIVITY MONITOR','dim'));top.addStretch()
             self.activity=self.label('IDLE','dim');top.addWidget(self.activity);ml.addLayout(top)
             self.graph=ActivityGraph();ml.addWidget(self.graph)
@@ -537,6 +733,11 @@ def run_gui(screenshot=None, qa_report=None):
             self.profile_warning=self.label('','dim');self.profile_warning.setWordWrap(True)
             self.profile_warning.setStyleSheet('color:#edc27b;font-weight:bold')
             layout.addWidget(self.profile_warning)
+            self.uplink_enabled=QCheckBox('ENABLE COMMODORE UPLINK WHEN CORE STARTS')
+            layout.addWidget(self.uplink_enabled)
+            self.uplink_host=QLineEdit();self.uplink_host.setPlaceholderText('auto (private LAN address)')
+            form.addRow('UPLINK HOST',self.uplink_host)
+            self.uplink_port=QSpinBox();self.uplink_port.setRange(1,65535);form.addRow('UPLINK PORT',self.uplink_port)
             profile_button=QPushButton('SELECT PERSONALITY FILE…');profile_button.clicked.connect(self.select_profile);layout.addWidget(profile_button)
             save=QPushButton('SAVE SETTINGS');save.clicked.connect(self.save_settings);layout.addWidget(save);layout.addStretch()
             layout.addWidget(self.label('Saved locally. Changes to model parameters take effect on the next request.','dim'))
@@ -672,7 +873,7 @@ def run_gui(screenshot=None, qa_report=None):
                     self.chat_status.setText('GENERATION ERROR // '+result['abort_reason'])
                     if not qa_report:QMessageBox.warning(self,'Generation failed',result['abort_reason'])
                 self.focus_prompt()
-            self.work(lambda emit:self.lab.chat(prompt,on_text=emit),'GENERATING RESPONSE',done)
+            self.work(lambda emit:self.lab.chat(prompt,on_text=emit,origin='gui'),'GENERATING RESPONSE',done)
             self.task.chunk.connect(stream)
         @staticmethod
         def escape(value):
@@ -702,6 +903,9 @@ def run_gui(screenshot=None, qa_report=None):
                     value=self.lab.config.get(key)
                     number=-1 if key=='seed' and value is None else (value or 0)
                     field.setValue(int(number) if isinstance(field,QSpinBox) else float(number))
+                self.uplink_enabled.setChecked(bool(self.lab.config.get('uplink_enabled',False)))
+                self.uplink_host.setText(str(self.lab.config.get('uplink_host','auto')))
+                self.uplink_port.setValue(int(self.lab.config.get('uplink_port',6464)))
             self.show_profile()
             self.pages.setCurrentIndex(2)
         def show_profile(self):
@@ -721,6 +925,13 @@ def run_gui(screenshot=None, qa_report=None):
             if self.busy:return
             config=dict(self.lab.config)
             for key,field in self.settings_fields.items():config[key]=None if key=='seed' and field.value()==-1 else field.value()
+            config['uplink_enabled']=self.uplink_enabled.isChecked()
+            config['uplink_host']=self.uplink_host.text().strip() or 'auto'
+            config['uplink_port']=self.uplink_port.value()
+            if config['uplink_enabled']:
+                try:uplink_bind_host(config['uplink_host'])
+                except (OSError,ValueError,RuntimeError) as error:
+                    QMessageBox.warning(self,'Uplink configuration',str(error));return
             if getattr(self,'selected_profile',None):
                 if QMessageBox.question(self,'Confirm profile change','Replace the active local personality profile with the selected file?')!=QMessageBox.Yes:return
                 source=Path(self.selected_profile);content=source.read_text(encoding='utf-8')
@@ -738,7 +949,12 @@ def run_gui(screenshot=None, qa_report=None):
                 self.selected_profile=None
                 self.show_profile()
             self.persist_config(config)
-            self.lab.config=config;self.log_line('SETTINGS SAVED LOCALLY')
+            prior=self.lab.uplink.status() if self.lab.uplink else None
+            self.lab.config=config
+            if not config['uplink_enabled']:self.lab.stop_uplink()
+            elif not prior or prior['host']!=uplink_bind_host(config['uplink_host']) or prior['port']!=config['uplink_port'] or prior['state']=='error':
+                self.lab.stop_uplink();self.lab.start_uplink()
+            self.log_line('SETTINGS SAVED LOCALLY');self.refresh_status()
         def persist_config(self,config):
             config_path=self.lab.data/'config.json';temp=config_path.with_suffix('.tmp')
             temp.write_text(json.dumps(config,indent=2,ensure_ascii=False),encoding='utf-8');os.replace(temp,config_path)
@@ -881,7 +1097,11 @@ def run_gui(screenshot=None, qa_report=None):
             self.indicators['ollama'].setText('CONNECTED' if self.lab and self.lab.ollama_ready else ('AVAILABLE' if self.external_ollama else 'OFFLINE'))
             self.indicators['model'].setText(self.lab.model if active else 'NOT LOADED')
             self.indicators['memory'].setText('ACTIVE' if active else ('MOUNTED' if self.lab else 'OFFLINE'))
-            self.indicators['c64'].setText('NOT CONNECTED');self.indicators['story'].setText('NOT INSTALLED')
+            uplink=self.lab.uplink.status() if self.lab and self.lab.uplink else {'state':'disabled','host':None,'port':None,'error':None,'clients':0}
+            self.indicators['c64'].setText(uplink['state'].upper())
+            endpoint=f"{uplink['host']}:{uplink['port']}" if uplink['host'] else 'OFF'
+            self.uplink_detail.setText('UPLINK // '+uplink['state'].upper()+'  '+endpoint+('  ERROR: '+uplink['error'] if uplink['error'] else ''))
+            self.indicators['story'].setText('NOT INSTALLED')
             if active and not self.busy:
                 try:
                     self.metrics['memories'].setText(str(self.lab.memory.db.execute("SELECT (SELECT COUNT(*) FROM memories WHERE status='active')+(SELECT COUNT(*) FROM relations WHERE status='active')").fetchone()[0]))
@@ -985,6 +1205,20 @@ def run_gui(screenshot=None, qa_report=None):
                 report['checks']['real_model_loaded']=window.lab.model==DEFAULT_MODEL
                 report['checks']['ui_responsive']=window.isVisible() and window.pulse.timer.isActive() and state['busy_ticks']>=2
                 report['checks']['real_status']=window.indicators['model'].text()==DEFAULT_MODEL
+                import socket
+                with socket.socket() as reserve:
+                    reserve.bind(('127.0.0.1',0))
+                    uplink_port=reserve.getsockname()[1]
+                window.lab.config.update(uplink_host='127.0.0.1',uplink_port=uplink_port)
+                window.lab.start_uplink();window.refresh_status()
+                report['checks']['uplink_listening_visible']=window.indicators['c64'].text()=='LISTENING'
+                with socket.create_connection(('127.0.0.1',uplink_port),timeout=3) as client:
+                    client.settimeout(3)
+                    assert b'UPLINK HERGESTELLT' in client.recv(128)
+                    window.refresh_status()
+                    report['checks']['uplink_connected_visible']=window.indicators['c64'].text()=='CONNECTED'
+                window.lab.stop_uplink();window.refresh_status()
+                report['checks']['uplink_shutdown_visible']=window.indicators['c64'].text()=='DISABLED'
                 window.open_settings();report['checks']['settings_page']=window.pages.currentIndex()==2 and window.settings_fields['num_ctx'].value()>0
                 report['checks']['active_profile_path_in_settings']='GIZMO_Awakening_V2_EN.txt' in window.profile_path.text() and not window.profile_warning.text()
                 previous_warning=window.lab.personality_warning

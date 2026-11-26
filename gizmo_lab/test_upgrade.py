@@ -38,7 +38,7 @@ class UpgradeTest(unittest.TestCase):
             with closing(sqlite3.connect(path)) as old:
                 old.executescript(SCHEMA)
                 old.execute("INSERT INTO conversations VALUES('synthetic','2026-01-01',NULL)")
-                old.execute("INSERT INTO messages VALUES(1,'synthetic','user','My dog is Lucy.','2026-01-01')")
+                old.execute("INSERT INTO messages(id,conversation_id,role,text,created_at) VALUES(1,'synthetic','user','My dog is Lucy.','2026-01-01')")
                 old.execute("INSERT INTO analysis_jobs(message_id,status,created_at,updated_at) VALUES(1,'done','2026-01-01','2026-01-01')")
                 old.execute('DROP TABLE relation_fts')
                 old.execute('CREATE VIRTUAL TABLE relation_fts USING fts5(subject,predicate,target,evidence)')
@@ -65,7 +65,7 @@ class UpgradeTest(unittest.TestCase):
             with closing(sqlite3.connect(path)) as old:
                 old.executescript(SCHEMA)
                 old.execute("INSERT INTO conversations VALUES('synthetic','2026-01-01',NULL)")
-                old.execute("INSERT INTO messages VALUES(1,'synthetic','user','My dog is Milo.','2026-01-01')")
+                old.execute("INSERT INTO messages(id,conversation_id,role,text,created_at) VALUES(1,'synthetic','user','My dog is Milo.','2026-01-01')")
                 old.execute("INSERT INTO entities VALUES(1,'USER','person','active','2026-01-01')")
                 old.execute("INSERT INTO entities VALUES(2,'Milo','pet','active','2026-01-01')")
                 old.execute("INSERT INTO relations(id,subject_id,predicate,object_id,value,source_message_id,evidence,confidence,status,fingerprint,created_at) VALUES(1,1,'has_dog',2,'',1,'My dog is Milo.',.95,'active','legacy-fingerprint','2026-01-01')")

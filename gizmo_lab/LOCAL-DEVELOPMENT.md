@@ -1,5 +1,11 @@
 # GIZMO Control Center 0.1 – lokaler Entwicklungs- und Produktivbetrieb
 
+## C64-Uplink 0.7.0
+
+04A integriert das unveränderte C64-PRG 0.2.2 über den ACK-TCP-Transport in die einzige LAB-Engine. In SETTINGS den Uplink einmal aktivieren; START CORE startet dann Modell und Listener gemeinsam. COMMODORE UPLINK zeigt `LISTENING`, `CONNECTED`, `DISCONNECTED` oder `ERROR` mit lokaler Adresse und Port. SHUTDOWN beendet Listener, laufende Chats und Ollama. Das Profil und die SQLite-Datenbank sind für GUI und C64 identisch; Nachrichten tragen die Herkunft `gui`, `c64` oder `terminal`. Alte `memory.json`-Dateien werden nicht automatisch eingelesen.
+
+`test_uplink.py` und `uplink_qa.py` prüfen ACK, fehlende und verspätete ACKs, Fragmentierung, Portkonflikt, lange Streams, Wiederverbindungen, gemeinsame Sitzung und echte Gemma-Antworten mit synthetischen Daten. Die reale QA ist in `qa_local.py --real-gemma` enthalten und verlangt lokale TCP-Sockets. Der Ultimate-Hardwaretest ist in `docs/04A-C64-HARDWARE-ABNAHME.md` beschrieben und bleibt bis zur Durchführung offen. Ein C64-C-Compiler gehört nicht zur lokalen LAB-Umgebung; das unveränderte PRG 0.2.2 wird für den Test aus dem vorhandenen ZIP verwendet.
+
 ## Episodic Memory 0.6.0
 
 Episoden werden inkrementell aus Originalgesprächen gebildet und im ARCHIVE mit Domäne, Themen, ausdrücklich genannter Bedeutung und Quellen angezeigt. Reale, hypothetische und fiktionale Episoden bleiben getrennt. Die vollständige synthetische Gemma-QA prüft Abruf nach Neustart, einen nicht genannten Detailwert, Korrektur/Löschung und Studio-Safe-Abschaltung. Das Repositorydokument `EPISODIC-MEMORY.md` enthält Architektur und Messwerte.

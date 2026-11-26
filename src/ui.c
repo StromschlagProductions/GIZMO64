@@ -183,7 +183,7 @@ void ui_prompt(const char *input)
 {
     cursor_hide();
     if (col) newline();
-    editor_length = 0;
+    editor_length = (unsigned char)strlen(input);
     ui_text("USR > ");
     ui_text(input);
 }
@@ -295,7 +295,7 @@ void ui_init(void)
 #endif
     for (i = 0; i < 1000; ++i) { SCREEN[i] = 32; COLORS[i] = palettes[palette]; }
     row = 0;
-    ui_line("  GIZMO-64   /   TERMINAL 0.2.1");
+    ui_line("  GIZMO-64   /   TERMINAL 0.2.2");
     ui_line("  SYSTEMKERN  //  C64 ULTIMATE");
     ui_line("  LINK / INITIALISIERT");
     ui_line("  ZIEL / 192.168.178.244:6464");
@@ -322,7 +322,7 @@ void ui_init(void)
     row = 23;
     ui_line(" --------------------------------------");
     for (i = 1; i < 39; ++i) SCREEN[920 + i] = 95;
-    ui_text(" F1 FARBE  HELP BEFEHLE  GIZMO 0.2.1");
+    ui_text(" F1 FARBE  HELP BEFEHLE  GIZMO 0.2.2");
     row = 5; col = 0;
     REGISTER(0xd418) = 15;
 }
