@@ -1,6 +1,10 @@
 # LAB 0.7.0 – C64-Uplink und Hardwareabnahme
 
-Die C64-PRG und die Kommunikationsquellen stammen unverändert aus dem hardwaregetesteten Stand `v0.2.2`. Die neue PC-Seite hängt den Uplink an dieselbe LAB-Engine wie das Control Center. Der bisherige eigenständige Bridge-Prozess mit eigenem Modell und `memory.json` wird nicht mehr gestartet. Eine Ultimate-Hardwareabnahme für **diese Kombination** steht noch aus.
+Die C64-PRG und die Kommunikationsquellen stammen unverändert aus dem hardwaregetesteten Stand `v0.2.2`. Die neue PC-Seite hängt den Uplink an dieselbe LAB-Engine wie das Control Center. Der bisherige eigenständige Bridge-Prozess mit eigenem Modell und `memory.json` wird nicht mehr gestartet.
+
+## Gemeldeter Teilbefund zum Ultimate (26.11.2026)
+
+Der Benutzer meldete für den ersten realen Test von LAB 0.7.0 auf dem C64 Ultimate funktionierende Gespräche, `DIAG` mit `OV:0` und `DROP:0` sowie eine wahrgenommene Latenz von etwa 1–3 Sekunden bis zum ersten Antworttext. Das bestätigt diesen einzelnen Dialog-/Transportversuch. Ein Test mit mindestens 100 empfangenen Antwortzeilen, Scrollen und Tippen während des Empfangs sowie eine dokumentierte Wiederverbindung wurden dabei noch nicht gemeldet; sie gelten weiterhin als offen. Für die neue 04B-Oberfläche liegt noch keine Hardwareprüfung vor.
 
 ## Einfacher Start
 
