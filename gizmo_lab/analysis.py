@@ -16,7 +16,7 @@ SCHEMA={'type':'object','properties':{'claims':{'type':'array','items':{'type':'
     'evidence':{'type':'string'},'scope':{'type':'string','enum':sorted(SCOPES)},'confidence':{'type':'number','minimum':0,'maximum':1}},
     'required':['subject','subject_kind','predicate','property_key','object','object_kind','value','evidence','scope','confidence'],
     'additionalProperties':False}}},'required':['claims'],'additionalProperties':False}
-PROMPT=('Extract only information the USER supplied in the newest message. Use earlier turns only to resolve clear references. '
+PROMPT=('Extract only information the USER supplied in the final user message. Earlier messages are reference context only, never extraction sources. '
         'Return JSON matching the schema. Quote an exact evidence span from the newest user message. '
         'Never treat assistant claims as personal facts. For ambiguity use scope hypothesis. '
         'For fictional stories use scope narrative. If nothing is supported, return an empty claims list. '
@@ -42,7 +42,7 @@ PROMPT=('Extract only information the USER supplied in the newest message. Use e
         'The response schema is: '+json.dumps(SCHEMA))
 
 
-def validate_claim(claim, source, context=None):
+def validate_claim(claim, source, context=None, anchors=None):
     if not isinstance(claim,dict) or set(claim)!=set(SCHEMA['properties']['claims']['items']['properties']):
         return None
     if any(not isinstance(claim[k],str) or len(claim[k])>160 for k in ('subject','subject_kind','predicate','property_key','object','object_kind','value','evidence','scope')):
@@ -62,7 +62,10 @@ def validate_claim(claim, source, context=None):
     required_terms={'has_dog':r'\b(dog|hund)\b','has_cat':r'\b(cat|katze)\b',
                     'has_sister':r'\b(sister|schwester)\b','has_brother':r'\b(brother|bruder)\b',
                     'has_mother':r'\b(mother|mutter)\b','has_father':r'\b(father|vater)\b'}
-    if claim['predicate'] in required_terms and not re.search(required_terms[claim['predicate']],evidence,re.I):
+    anchors=anchors or {'roles':[],'entities':[]}
+    named_role=(claim['predicate'] in anchors['roles'] and claim['object'] and
+        re.search(r'\b(?:name\s+(?:is|was)|called|named|heißt|heisst|ist)\s+'+re.escape(claim['object'])+r'\b',evidence,re.I))
+    if claim['predicate'] in required_terms and not re.search(required_terms[claim['predicate']],evidence,re.I) and not named_role:
         return None
     try:
         confidence=float(claim['confidence'])
@@ -73,7 +76,11 @@ def validate_claim(claim, source, context=None):
     speculative,fictional=source_flags(source)
     pronoun=bool(re.match(r'\s*(she|he|they|her|his|their|sie|er|ihr|ihre|sein|seine)\b',evidence,re.I))
     resolved=False
-    if pronoun and context:
+    if pronoun and named_role:
+        resolved=True
+    if pronoun and claim['subject'].casefold() in {name.casefold() for name in anchors['entities']}:
+        resolved=True
+    if pronoun and context and not resolved:
         # Resolve only a named entity from an immediately preceding, factual USER turn.
         # Assistant assertions and turns containing multiple named people are not anchors.
         for previous in reversed(context[:-1]):
@@ -106,6 +113,26 @@ def validate_claim(claim, source, context=None):
         status='fictional'
     return {**claim,'property_key':property_key,'object':'' if claim['predicate']=='attribute' else claim['object'],'scope':scope,
             'confidence':confidence,'status':status}
+
+
+def contextual_name_claim(source,context,anchors):
+    """Link a name to one recent user-stated role; never use assistant text as evidence."""
+    roles=anchors.get('roles',[])
+    if len(roles)!=1 or '?' in source or any(source_flags(source)):
+        return None
+    role=roles[0]
+    patterns=[(r'\bher name (?:is|was) ([\w-]{2,60})\b',{'has_sister','has_mother','has_dog','has_cat'}),
+              (r'\bhis name (?:is|was) ([\w-]{2,60})\b',{'has_brother','has_father','has_dog','has_cat'}),
+              (r'\bsie (?:heißt|heisst) ([\w-]{2,60})\b',{'has_sister','has_mother','has_dog','has_cat'}),
+              (r'\ber (?:heißt|heisst) ([\w-]{2,60})\b',{'has_brother','has_father','has_dog','has_cat'})]
+    for pattern,allowed in patterns:
+        match=re.search(pattern,source,re.I)
+        if match and role in allowed:
+            candidate={'subject':'USER','subject_kind':'person','predicate':role,'property_key':'',
+                       'object':match.group(1),'object_kind':'pet' if role in ('has_dog','has_cat') else 'person',
+                       'value':'','evidence':match.group(0),'scope':'personal','confidence':1.0}
+            return validate_claim(candidate,source,context,anchors)
+    return None
 
 
 class Analyzer:
@@ -151,32 +178,41 @@ class Analyzer:
             return False
         blocked=self.memory.source_blocked(job['message_id'])
         if blocked:
-            self.memory.finish_job(job['id'])
+            self.memory.finish_job(job['id'],claim_count=0,rejected_count=0,empty_reason='source_blocked')
             return True
         started=time.perf_counter()
+        rejected_count=None
         try:
-            context=self.memory.context_for_message(job['message_id'],5)
+            context=self.memory.context_for_message(job['message_id'],16)
             self.memory.extract_user(job['text'],job['message_id'])
             system_prompt=PROMPT
+            anchors=self.memory.analysis_anchors(context,job['message_id'])
+            if anchors['roles']:
+                system_prompt+=' Earlier USER evidence supports a recent '+anchors['roles'][0]+' reference.'
+            if anchors['entities']:
+                system_prompt+=' A confirmed earlier USER relationship uniquely names '+json.dumps(anchors['entities'][0])+'.'
             if re.match(r'\s*(she|he|her|his|sie|er|ihr|sein)\b',job['text'],re.I):
                 references=[]
                 for entity in self.memory.db.execute("SELECT name,kind FROM entities WHERE status='active' AND kind IN ('person','pet') AND name<>'USER' LIMIT 256"):
                     probe={'subject':entity['name'],'subject_kind':entity['kind'],'predicate':'related_to','property_key':'','object':'','object_kind':'other',
                            'value':'reference','evidence':job['text'][:160],'scope':'personal','confidence':1}
-                    checked=validate_claim(probe,job['text'],context)
+                    checked=validate_claim(probe,job['text'],context,anchors)
                     if checked and checked['status']=='active':
                         references.append(entity['name'])
                 if len(references)==1:
                     system_prompt+=' Grounded reference from the preceding user-authored turn: '+json.dumps(references[0])+'. Resolve this pronoun and extract the explicit new factual clause; a clear pronoun alone is not a reason for empty claims.'
             limit=int(self.config.get('num_ctx',8192))
             available=limit-700-max(512,limit//8)-64
-            while len(context)>1 and token_bound(system_prompt)+token_bound(json.dumps(context,ensure_ascii=False))>available:
-                context.pop(0)
-            if token_bound(system_prompt)+token_bound(json.dumps(context,ensure_ascii=False))>available:
+            prior=[{'id':item['id'],'text':item['text']} for item in context[:-1] if item['role']=='user'][-8:]
+            reference='Earlier USER statements for reference only; do not extract claims from this list: '
+            while prior and token_bound(system_prompt)+token_bound(reference)+token_bound(json.dumps(prior,ensure_ascii=False))+token_bound(job['text'])>available:
+                prior.pop(0)
+            if token_bound(system_prompt)+token_bound(reference)+token_bound(json.dumps(prior,ensure_ascii=False))+token_bound(job['text'])>available:
                 raise ValueError('Analysequelle überschreitet das sichere Kontextbudget; nichts abgeschnitten')
             payload={'model':self.config.get('model','gemma4:12b'),
                      'messages':[{'role':'system','content':system_prompt},
-                                 {'role':'user','content':json.dumps(context,ensure_ascii=False)}],
+                                 {'role':'system','content':reference+json.dumps(prior,ensure_ascii=False)},
+                                 {'role':'user','content':job['text']}],
                      'format':SCHEMA,'stream':True,'think':False,'keep_alive':self.config.get('keep_alive',-1),
                      'options':{'temperature':0,'num_predict':700,'num_ctx':self.config.get('num_ctx',8192)}}
             request=urllib.request.Request(self.config.get('ollama_url','http://localhost:11434').rstrip('/')+'/api/chat',
@@ -206,20 +242,27 @@ class Analyzer:
                 raise ValueError('Ungueltige JSON-Claims')
             accepted=[]
             for candidate in parsed['claims'][:12]:
-                claim=validate_claim(candidate,job['text'],context)
+                claim=validate_claim(candidate,job['text'],context,anchors)
                 if claim:
                     accepted.append(claim)
+            model_accepted=len(accepted)
+            linked=contextual_name_claim(job['text'],context,anchors)
+            if linked and not any(item['subject']==linked['subject'] and item['predicate']==linked['predicate'] and item['object']==linked['object'] for item in accepted):
+                accepted.append(linked)
+            rejected_count=min(len(parsed['claims']),12)-model_accepted
             if parsed['claims'] and not accepted:
                 raise ValueError('Keine Analysebehauptung besteht die Beleg- und Typprüfung')
             for claim in accepted:
                     self.memory.add_relation(claim['subject'].strip(),claim['subject_kind'],claim['predicate'],
                                              claim['object'].strip(),claim['object_kind'],claim['value'].strip(),
                                              job['message_id'],claim['evidence'].strip(),claim['confidence'],claim['status'],claim['scope'],claim['property_key'])
-            self.memory.finish_job(job['id'])
+            self.memory.finish_job(job['id'],claim_count=len(accepted),rejected_count=rejected_count,
+                empty_reason='no_extractable_claims' if not parsed['claims'] else 'claims_rejected' if not accepted else None)
             return True
         except Exception as error:
             self.response=None
-            self.memory.finish_job(job['id'],'cancelled' if self.stop_event.is_set() or self.pause_event.is_set() else str(error)[:200])
+            self.memory.finish_job(job['id'],'cancelled' if self.stop_event.is_set() or self.pause_event.is_set() else str(error)[:200],
+                rejected_count=rejected_count)
             return False
         finally:
             self.last_duration_s=time.perf_counter()-started

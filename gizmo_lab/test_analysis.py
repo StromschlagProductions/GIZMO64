@@ -103,8 +103,9 @@ class AnalysisTest(unittest.TestCase):
                 self.assertEqual(set(properties['predicate']['enum']),PREDICATES)
                 self.assertEqual(set(properties['subject_kind']['enum']),KINDS)
                 self.assertEqual(set(properties['scope']['enum']),SCOPES)
-                context=json.loads(payload['messages'][-1]['content'])
-                source=context[-1]['text']
+                self.assertEqual(payload['messages'][-1]['role'],'user')
+                source=payload['messages'][-1]['content']
+                self.assertIn('reference only',payload['messages'][-2]['content'])
                 item=produced[texts.index(source)]
                 return io.BytesIO(json.dumps({'message':{'content':json.dumps({'claims':[item]})}}).encode())
             analyzer=Analyzer(path,{'model':'gemma4:12b'},opener)

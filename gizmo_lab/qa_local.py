@@ -217,6 +217,8 @@ def main():
             active_memory_acceptance(folder)
             from flexible_memory_qa import run as flexible_memory_acceptance
             flexible_memory_acceptance(folder)
+            from memory_diagnostics_qa import run as diagnostics_acceptance
+            diagnostics_acceptance(folder)
             installed_launcher_check(folder)
             control_center_check(folder)
         print(f'[+] Lokale QA bestanden. Synthetische Berichte: {folder}',flush=True)

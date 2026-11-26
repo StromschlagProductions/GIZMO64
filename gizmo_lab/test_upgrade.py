@@ -10,6 +10,28 @@ from version import VERSION, SCHEMA_VERSION
 
 
 class UpgradeTest(unittest.TestCase):
+    def test_schema_six_to_seven_audits_jobs_after_verified_backup(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path=Path(temporary)/'memory.sqlite3'
+            store=Memory(path);conversation=store.conversation()
+            source=store.add_message(conversation,'user','I have a sister.')
+            store.enqueue(source);job=store.next_job();store.finish_job(job['id'])
+            store.close()
+            with closing(sqlite3.connect(path)) as old:
+                for column in ('claim_count','rejected_count','empty_reason'):
+                    old.execute('ALTER TABLE analysis_jobs DROP COLUMN '+column)
+                old.execute("UPDATE lab_metadata SET value='0.4.2' WHERE key IN ('analysis_revision','app_version')")
+                old.execute('PRAGMA user_version=6');old.commit()
+            upgraded=Memory(path)
+            try:
+                columns={row['name'] for row in upgraded.db.execute('PRAGMA table_info(analysis_jobs)')}
+                self.assertTrue({'claim_count','rejected_count','empty_reason'}<=columns)
+                self.assertEqual(upgraded.job_counts(),{'pending':1})
+                backups=list(path.parent.glob('*.bak'));self.assertEqual(len(backups),1)
+                with closing(sqlite3.connect(backups[0])) as previous:
+                    self.assertEqual(previous.execute('PRAGMA user_version').fetchone()[0],6)
+                    self.assertEqual(previous.execute('PRAGMA integrity_check').fetchone()[0],'ok')
+            finally:upgraded.close()
     def test_schema_five_to_six_preserves_archive_and_requeues_analysis(self):
         with tempfile.TemporaryDirectory() as temporary:
             path=Path(temporary)/'memory.sqlite3'

@@ -112,7 +112,7 @@ CREATE TABLE IF NOT EXISTS entities(id INTEGER PRIMARY KEY, name TEXT NOT NULL C
 CREATE TABLE IF NOT EXISTS relations(id INTEGER PRIMARY KEY, subject_id INTEGER NOT NULL, predicate TEXT NOT NULL, property_key TEXT NOT NULL DEFAULT '', object_id INTEGER, value TEXT, source_message_id INTEGER NOT NULL, evidence TEXT NOT NULL, confidence REAL NOT NULL, status TEXT NOT NULL, fingerprint TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, FOREIGN KEY(subject_id) REFERENCES entities(id), FOREIGN KEY(object_id) REFERENCES entities(id), FOREIGN KEY(source_message_id) REFERENCES messages(id));
 CREATE TABLE IF NOT EXISTS relation_sources(relation_id INTEGER NOT NULL, message_id INTEGER NOT NULL, evidence TEXT NOT NULL, PRIMARY KEY(relation_id,message_id), FOREIGN KEY(relation_id) REFERENCES relations(id), FOREIGN KEY(message_id) REFERENCES messages(id));
 CREATE TABLE IF NOT EXISTS relation_events(id INTEGER PRIMARY KEY, relation_id INTEGER NOT NULL, action TEXT NOT NULL, old_value TEXT, new_value TEXT, old_claim_key TEXT, created_at TEXT NOT NULL, FOREIGN KEY(relation_id) REFERENCES relations(id));
-CREATE TABLE IF NOT EXISTS analysis_jobs(id INTEGER PRIMARY KEY, message_id INTEGER NOT NULL UNIQUE, status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(message_id) REFERENCES messages(id));
+CREATE TABLE IF NOT EXISTS analysis_jobs(id INTEGER PRIMARY KEY, message_id INTEGER NOT NULL UNIQUE, status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, error TEXT, claim_count INTEGER, rejected_count INTEGER, empty_reason TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(message_id) REFERENCES messages(id));
 CREATE INDEX IF NOT EXISTS memories_domain_key ON memories(domain,key,status);
 CREATE INDEX IF NOT EXISTS relations_subject ON relations(subject_id,predicate,status);
 CREATE INDEX IF NOT EXISTS memory_sources_message ON memory_sources(message_id);
@@ -159,6 +159,10 @@ class Memory:
         for column in ('old_value','new_value','old_claim_key'):
             if column not in event_columns:
                 self.db.execute(f'ALTER TABLE relation_events ADD COLUMN {column} TEXT')
+        job_columns={row['name'] for row in self.db.execute('PRAGMA table_info(analysis_jobs)')}
+        for column,definition in [('claim_count','INTEGER'),('rejected_count','INTEGER'),('empty_reason','TEXT')]:
+            if column not in job_columns:
+                self.db.execute(f'ALTER TABLE analysis_jobs ADD COLUMN {column} {definition}')
         fts_columns={row['name'] for row in self.db.execute('PRAGMA table_info(relation_fts)')}
         if 'property' not in fts_columns:
             self.db.execute('DROP TABLE relation_fts')
@@ -174,7 +178,7 @@ class Memory:
             if not revision or revision[0]!=ANALYSIS_REVISION:
                 self.retried_jobs=self.db.execute("SELECT COUNT(*) FROM analysis_jobs WHERE status='failed'").fetchone()[0]
                 self.db.execute("INSERT OR IGNORE INTO analysis_jobs(message_id,status,created_at,updated_at) SELECT id,'pending',?,? FROM messages WHERE role='user'",(utc_now(),utc_now()))
-                self.db.execute("UPDATE analysis_jobs SET status='pending',error=NULL,updated_at=? WHERE status IN ('done','failed')",(utc_now(),))
+                self.db.execute("UPDATE analysis_jobs SET status='pending',error=NULL,claim_count=NULL,rejected_count=NULL,empty_reason=NULL,updated_at=? WHERE status IN ('done','failed')",(utc_now(),))
                 self.reindexed_jobs=self.db.execute("SELECT COUNT(*) FROM analysis_jobs WHERE status='pending'").fetchone()[0]
                 self.db.execute('DELETE FROM relation_fts')
                 for row in self.list_relations():
@@ -224,10 +228,21 @@ class Memory:
     def job_counts(self):
         return {row['status']:row['count'] for row in self.db.execute('SELECT status,COUNT(*) count FROM analysis_jobs GROUP BY status')}
 
+    def analysis_summary(self):
+        counts=self.job_counts()
+        counts['empty']=self.db.execute("SELECT COUNT(*) FROM analysis_jobs WHERE status='done' AND claim_count=0").fetchone()[0]
+        counts['unresolved']=self.db.execute("SELECT COUNT(*) FROM relations WHERE status='pending'").fetchone()[0]
+        return counts
+
     def retry_failed(self):
         with self.db:
-            cur=self.db.execute("UPDATE analysis_jobs SET status='pending',error=NULL,updated_at=? WHERE status='failed'",(utc_now(),))
+            cur=self.db.execute("UPDATE analysis_jobs SET status='pending',error=NULL,claim_count=NULL,rejected_count=NULL,empty_reason=NULL,updated_at=? WHERE status='failed'",(utc_now(),))
         return cur.rowcount
+
+    def retry_job(self,job_id):
+        with self.db:
+            result=self.db.execute("UPDATE analysis_jobs SET status='pending',error=NULL,claim_count=NULL,rejected_count=NULL,empty_reason=NULL,updated_at=? WHERE id=? AND status='failed'",(utc_now(),job_id))
+        return result.rowcount==1
 
     def next_job(self):
         row=self.db.execute("SELECT j.id,j.message_id,m.text,m.conversation_id FROM analysis_jobs j JOIN messages m ON m.id=j.message_id WHERE j.status='pending' ORDER BY j.id LIMIT 1").fetchone()
@@ -237,12 +252,12 @@ class Memory:
             self.db.execute("UPDATE analysis_jobs SET status='processing',attempts=attempts+1,updated_at=? WHERE id=?",(utc_now(),row['id']))
         return dict(row)
 
-    def finish_job(self, job_id, error=None):
+    def finish_job(self, job_id, error=None, claim_count=None, rejected_count=None, empty_reason=None):
         with self.db:
-            self.db.execute('UPDATE analysis_jobs SET status=?,error=?,updated_at=? WHERE id=?',
-                            ('pending' if error=='cancelled' else ('failed' if error else 'done'),error,utc_now(),job_id))
+            self.db.execute('UPDATE analysis_jobs SET status=?,error=?,claim_count=?,rejected_count=?,empty_reason=?,updated_at=? WHERE id=?',
+                            ('pending' if error=='cancelled' else ('failed' if error else 'done'),error,claim_count,rejected_count,empty_reason,utc_now(),job_id))
 
-    def context_for_message(self, message_id, limit=5):
+    def context_for_message(self, message_id, limit=16):
         row=self.db.execute('SELECT conversation_id FROM messages WHERE id=?',(message_id,)).fetchone()
         if not row:
             return []
@@ -255,6 +270,39 @@ class Memory:
             if not blocked or item['id']==message_id:
                 result.append(item)
         return result
+
+    def analysis_anchors(self,context,message_id):
+        """Ground pronouns in recent USER role mentions and earlier confirmed edges."""
+        role_patterns={'has_sister':r'\b(sister|schwester)\b',
+                       'has_brother':r'\b(brother|bruder)\b',
+                       'has_mother':r'\b(mother|mutter)\b',
+                       'has_father':r'\b(father|vater)\b',
+                       'has_dog':r'\b(dog|hund)\b',
+                       'has_cat':r'\b(cat|katze)\b'}
+        mentions=[]
+        for item in reversed(context[:-1]):
+            if item['role']!='user':continue
+            text=item['text']
+            if '?' in text or any(source_flags(text)) or self.source_blocked(item['id']):continue
+            roles=[role for role,pattern in role_patterns.items() if re.search(pattern,text,re.I)]
+            if roles:mentions.append((item['id'],roles))
+            if len(mentions)>=4:break
+        if not mentions:return {'roles':[],'entities':[]}
+        role=mentions[0][1][0] if len(mentions[0][1])==1 else None
+        if not role:return {'roles':[],'entities':[]}
+        family={'has_sister','has_mother','has_brother','has_father'}
+        if role in family and any(other in family and other!=role for _,roles in mentions[1:] for other in roles):
+            return {'roles':[],'entities':[]}
+        entities=[]
+        generic={'sister','schwester','brother','bruder','mother','mutter','father','vater','dog','hund','cat','katze'}
+        for row in self.db.execute("""SELECT o.name,r.source_message_id,m.text FROM relations r
+            JOIN entities o ON o.id=r.object_id JOIN messages m ON m.id=r.source_message_id
+            WHERE r.subject_key='user' AND r.predicate=? AND r.status='active'
+            AND r.scope IN ('personal','semantic','episodic') AND r.source_message_id<?""",(role,message_id)):
+            if row['name'].casefold() not in generic and not self.source_blocked(row['source_message_id']) and not any(source_flags(row['text'])) and '?' not in row['text']:
+                entities.append(row['name'])
+        entities=list(dict.fromkeys(entities))
+        return {'roles':[role], 'entities':entities if len(entities)==1 else []}
 
     def entity(self,name,kind):
         name=name.strip()
@@ -503,6 +551,7 @@ class Memory:
 
     def retrieve(self, query, budget=900, recent_context=None):
         started=time.perf_counter()
+        excluded=[]
         rows=self.db.execute("SELECT * FROM memories WHERE status='active' AND domain IN ('identity','personal') ORDER BY importance DESC,id DESC LIMIT 24").fetchall()
         selected={row['id']:dict(row) for row in rows}
         stop={'what','which','about','remember','does','that','this','have','with','your','tell','know','again','something','would','could','the','and','was','wie','was','mein','meine','über','noch','eine','einen','sich','mir','der','die','das','und'}
@@ -535,12 +584,15 @@ class Memory:
             if item['source_message_id'] and not manual:
                 source=self.db.execute('SELECT role,text FROM messages WHERE id=?',(item['source_message_id'],)).fetchone()
                 if not source or source['role']!='user' or any(source_flags(source['text'])):
+                    excluded.append({'id':'memory:'+str(item['id']),'reason':'source_not_confirmed','source_message_id':item['source_message_id']})
                     continue
             if item['source_message_id'] and self.source_blocked(item['source_message_id']):
                 # A manually corrected value remains authoritative even when its old source is blocked.
                 if not manual:
+                    excluded.append({'id':'memory:'+str(item['id']),'reason':'source_blocked','source_message_id':item['source_message_id']})
                     continue
             if item['key']!='interest' and self.db.execute("SELECT 1 FROM memories WHERE domain=? AND key=? AND status='pending' AND value<>?",(item['domain'],item['key'],item['value'])).fetchone():
+                excluded.append({'id':'memory:'+str(item['id']),'reason':'disputed','source_message_id':item['source_message_id']})
                 continue
             line=json.dumps({'fact':item['key'],'value':item['value'],'source':item['source_message_id']},ensure_ascii=False,separators=(',',':'))
             score=100 if item['key']=='name' else 20+item['importance']
@@ -553,6 +605,11 @@ class Memory:
                 ids[row[0]]=80
         for row in self.db.execute("SELECT r.id FROM relations r WHERE r.subject_key='user' AND r.status='active' ORDER BY CASE WHEN r.predicate IN ('has_sister','has_brother','has_dog','has_cat') THEN 0 ELSE 1 END,r.id DESC LIMIT 24"):
             ids.setdefault(row[0],65)
+        if ids:
+            marks=','.join('?' for _ in ids)
+            for item in self.db.execute(f'SELECT id,status,source_message_id FROM relations WHERE id IN ({marks})',list(ids)):
+                if item['status']!='active':
+                    excluded.append({'id':'relation:'+str(item['id']),'reason':'status_'+item['status'],'source_message_id':item['source_message_id']})
         context_text=' '.join(item['content'] for item in (recent_context or [])[-4:])
         frontier=set()
         rows_by_id={}
@@ -566,7 +623,9 @@ class Memory:
                     AND s.status='active' AND (o.id IS NULL OR o.status='active')""",list(ids)):
                     if row['id'] in rows_by_id:
                         continue
-                    if not self.relation_is_confirmed(row):
+                    reason=self.relation_exclusion_reason(row)
+                    if reason:
+                        excluded.append({'id':'relation:'+str(row['id']),'reason':reason,'source_message_id':row['source_message_id']})
                         continue
                     rows_by_id[row['id']]=dict(row)
                     # Do not traverse through USER and accidentally connect all personal facts.
@@ -583,6 +642,9 @@ class Memory:
         role_queries=set(words)&{'has_sister','has_brother','has_mother','has_father','has_dog','has_cat'}
         anchored={row['object_id'] for row in rows_by_id.values() if self.canonical_subject(row['subject'])=='USER' and row['predicate'] in role_queries}
         if role_queries:
+            for ident,row in rows_by_id.items():
+                if not ((self.canonical_subject(row['subject'])=='USER' and row['predicate'] in role_queries) or row['subject_id'] in anchored or row['object_id'] in anchored):
+                    excluded.append({'id':'relation:'+str(ident),'reason':'not_connected_to_requested_role','source_message_id':row['source_message_id']})
             rows_by_id={ident:row for ident,row in rows_by_id.items() if
                 (self.canonical_subject(row['subject'])=='USER' and row['predicate'] in role_queries) or row['subject_id'] in anchored or row['object_id'] in anchored}
             for predicate in role_queries:
@@ -623,6 +685,8 @@ class Memory:
             markers=','.join('?' for _ in frontier)
             guards=set()
             for row in self.db.execute(f"SELECT r.*,s.name subject FROM relations r JOIN entities s ON s.id=r.subject_id WHERE r.subject_id IN ({markers}) AND r.status IN ('pending','fictional') ORDER BY r.id DESC LIMIT 32",list(frontier)):
+                if row['predicate']=='attribute' and row['property_key']=='name' and row['subject'].casefold()==(row['value'] or '').casefold():
+                    continue
                 if row['predicate'] not in words and row['property_key'] not in words:
                     continue
                 slot=(row['subject_key'],row['predicate'],row['property_key'])
@@ -631,29 +695,38 @@ class Memory:
                 guards.add(slot)
                 line=json.dumps({'constraint':'not established or disputed','subject':self.canonical_subject(row['subject']),'relation':row['property_key'] or row['predicate']},ensure_ascii=False,separators=(',',':'))
                 candidates.append((95,line,'constraint:'+str(row['id'])))
-        output=[];used=0;chosen=[]
-        for _score,line,ident in sorted(candidates,key=lambda item:-item[0]):
+        output=[];used=0;chosen=[];details=[]
+        for score,line,ident in sorted(candidates,key=lambda item:-item[0]):
             cost=token_bound(line)+1
             if used+cost<=max(0,budget):
                 output.append(line);used+=cost;chosen.append(ident)
-        self.last_retrieval={'selected':chosen,'bound':used,'candidate_count':len(candidates)}
+                details.append({'id':ident,'score':score,'source_message_id':json.loads(line).get('source')})
+            else:
+                excluded.append({'id':ident,'reason':'memory_budget','source_message_id':json.loads(line).get('source')})
+        self.last_retrieval={'selected':chosen,'selected_details':details,
+            'candidates':[{'id':ident,'score':score,'source_message_id':json.loads(line).get('source')} for score,line,ident in candidates[:128]],
+            'excluded':excluded[:128],
+            'bound':used,'budget':budget,'candidate_count':len(candidates)}
         return output,time.perf_counter()-started
 
     def relation_is_confirmed(self,row):
+        return self.relation_exclusion_reason(row) is None
+
+    def relation_exclusion_reason(self,row):
         if row['source_role']!='user' or row['confidence']<.8 or row['scope'] not in ('personal','semantic','episodic'):
-            return False
+            return 'source_or_confidence'
         if self.source_blocked(row['source_message_id']) and not row['manual']:
-            return False
+            return 'source_blocked'
         if not row['manual'] and any(source_flags(row['source_text'])):
-            return False
+            return 'fiction_or_hypothesis'
         if self.db.execute("SELECT 1 FROM relations WHERE claim_key=? AND status IN ('deleted','superseded') LIMIT 1",(row['claim_key'],)).fetchone():
-            return False
+            return 'deleted_or_superseded'
         single=row['predicate'] in SINGLE_VALUE_PREDICATES or (row['predicate']=='attribute' and row['property_key'] not in MULTI_VALUE_PROPERTIES)
         if single:
             conflict=self.db.execute("SELECT 1 FROM relations WHERE subject_key=? AND predicate=? AND property_key=? AND claim_key<>? AND status IN ('active','pending') AND scope IN ('personal','semantic','episodic','hypothesis') AND confidence>=.8 LIMIT 1",(row['subject_key'],row['predicate'],row['property_key'],row['claim_key'])).fetchone()
             if conflict:
-                return False
-        return True
+                return 'disputed'
+        return None
 
     def export(self,destination):
         destination=Path(destination)

@@ -1,0 +1,9 @@
+# Memory Diagnostics (LAB 0.4.3, lokaler Zwischenstand)
+
+Die Analyse unterscheidet jetzt den neuesten Benutzertext ausdrücklich vom älteren, ausschließlich zur Referenz verwendeten Kontext. Ein Fenster von 16 Nachrichten erlaubt die Auflösung verteilter Angaben. Pronomen werden nur an frühere Benutzeraussagen und zeitlich passende bestätigte Beziehungen gebunden. Eine hypothetische oder fiktionale Quelle reicht weiterhin nicht für eine bestätigte persönliche Beziehung.
+
+Analyseaufträge speichern die Anzahl akzeptierter und verworfener Claims sowie einen Grund für leere Ergebnisse. Im Control Center werden Pending, Processing, Completed, Failed, Unresolved und abgeschlossene Aufträge ohne Claims getrennt angezeigt. Ein einzelner fehlgeschlagener Auftrag kann gezielt erneut eingereiht werden. Der Memory Inspector zeigt nur in der laufenden Sitzung Kandidaten, Quellen-IDs, Auswahl, Ausschlussgründe, Kontextbudget und den tatsächlich verwendeten Memory-Systemtext. Es werden standardmäßig keine dauerhaften privaten Diagnoseprotokolle erstellt.
+
+Synthetische Tests prüfen verteilte Schwester- und Haustierangaben, mehrdeutige und hypothetische Referenzen, leere/fehlgeschlagene Analyse, Schema-6-Migration, echte Gemma-Antworten nach Neustart sowie die GUI-Anzeigen. Die vollständige lokale QA mit bisheriger Active-Memory-Abnahme war erfolgreich.
+
+**Freigabestand:** Der Code ist noch nicht veröffentlicht oder produktiv installiert. Eine produktive, personenbezogene manuelle Statusänderung wurde durch die automatische Freigabeprüfung abgelehnt. Die produktive SQLite-Datenbank wurde aus einer geprüften Sicherung auf Schema 6 zurückgesetzt; der ebenfalls geprüfte Schema-7-Zwischenstand bleibt als lokale Sicherung erhalten. Bis zur Klärung gilt weiterhin die veröffentlichte LAB-0.4.2-Version. Keine Story-, C64- oder Hybrid-Memory-Arbeit gehört zu diesem Zwischenstand.

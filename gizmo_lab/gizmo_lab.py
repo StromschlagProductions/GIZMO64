@@ -488,6 +488,7 @@ def run_gui(screenshot=None, qa_report=None):
                 metrics.addWidget(self.label(title,'dim'),0,index%3) if index<3 else metrics.addWidget(self.label(title,'dim'),2,index%3)
                 item=self.label('—','value');self.metrics[key]=item;metrics.addWidget(item,1 if index<3 else 3,index%3)
             ml.addLayout(metrics);home.addWidget(monitor)
+            self.analysis_status=self.label('ANALYSIS // CORE OFFLINE','dim');self.analysis_status.setWordWrap(True);home.addWidget(self.analysis_status)
             self.log=QTextEdit();self.log.setReadOnly(True);self.log.setMinimumHeight(112);self.log.setMaximumHeight(136);home.addWidget(self.log)
             nav=QHBoxLayout()
             for name,action in [('MODEL LAB',self.open_model),('SETTINGS',self.open_settings),('ARCHIVE',self.open_archive)]:
@@ -541,11 +542,13 @@ def run_gui(screenshot=None, qa_report=None):
             layout.addWidget(self.label('Saved locally. Changes to model parameters take effect on the next request.','dim'))
         def build_archive_page(self):
             layout=self.page('ARCHIVE // LOCAL');self.archive_tabs=QTabWidget();self.tables={}
+            self.archive_summary=self.label('ANALYSIS // CORE OFFLINE','dim');self.archive_summary.setWordWrap(True);layout.addWidget(self.archive_summary)
             search_row=QHBoxLayout();self.archive_search=QLineEdit();self.archive_search.setPlaceholderText('Search archive...')
             self.archive_search.textChanged.connect(self.reset_archive_page);search_row.addWidget(self.archive_search);layout.addLayout(search_row)
-            for key,columns in [('memories',['ID','STATUS','DOMAIN','KEY','VALUE']),('entities',['ID','STATUS','KIND','NAME']),('relations',['ID','STATUS','SUBJECT','RELATION','TARGET','SOURCE']),('messages',['ID','ROLE','CONVERSATION','TEXT']),('jobs',['ID','STATUS','ATTEMPTS','ERROR'])]:
+            for key,columns in [('memories',['ID','STATUS','DOMAIN','KEY','VALUE']),('entities',['ID','STATUS','KIND','NAME']),('relations',['ID','STATUS','SUBJECT','RELATION','TARGET','SOURCE']),('messages',['ID','ROLE','CONVERSATION','TEXT']),('jobs',['ID','STATUS','ATTEMPTS','CLAIMS','REJECTED','EMPTY REASON','ERROR'])]:
                 table=QTableWidget(0,len(columns));table.setHorizontalHeaderLabels(columns);table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch);table.setEditTriggers(QTableWidget.NoEditTriggers)
                 self.archive_tabs.addTab(table,key.upper());self.tables[key]=table
+            self.inspector=QTextEdit();self.inspector.setReadOnly(True);self.archive_tabs.addTab(self.inspector,'MEMORY INSPECTOR')
             self.archive_tabs.currentChanged.connect(self.reset_archive_page)
             layout.addWidget(self.archive_tabs,1)
             navigation=QHBoxLayout();previous=QPushButton('PREVIOUS');previous.clicked.connect(lambda:self.move_archive_page(-1))
@@ -557,8 +560,10 @@ def run_gui(screenshot=None, qa_report=None):
             approve=QPushButton('APPROVE RELATION');approve.clicked.connect(lambda:self.change_relation('active'))
             correct_relation=QPushButton('CORRECT PROPERTY');correct_relation.clicked.connect(self.correct_property)
             remove_relation=QPushButton('DELETE RELATION');remove_relation.setObjectName('shutdown');remove_relation.clicked.connect(lambda:self.change_relation('deleted'))
+            retry_job=QPushButton('RETRY FAILED JOB');retry_job.clicked.connect(self.retry_selected_job)
             row.addWidget(refresh);row.addWidget(edit);row.addWidget(delete);layout.addLayout(row)
             relations_row=QHBoxLayout();relations_row.addWidget(approve);relations_row.addWidget(correct_relation);relations_row.addWidget(remove_relation);layout.addLayout(relations_row)
+            layout.addWidget(retry_job)
             layout.addWidget(self.label('Deletion requires confirmation. The archive stays on this PC.','dim'))
         def log_line(self,text):
             self.log.append(datetime.now().strftime('%H:%M:%S')+'  '+text)
@@ -742,6 +747,10 @@ def run_gui(screenshot=None, qa_report=None):
         def refresh_archive(self):
             if not self.lab or self.busy:return
             memory=self.lab.memory
+            summary=memory.analysis_summary()
+            self.archive_summary.setText(self.format_analysis_summary(summary))
+            if self.archive_tabs.currentIndex()>=len(self.tables):
+                self.refresh_inspector();self.archive_data_version=memory.db.execute('PRAGMA data_version').fetchone()[0];return
             key=list(self.tables)[self.archive_tabs.currentIndex()]
             queries={
                 'memories':('memories','id,status,domain,key,value','status,domain,key,value'),
@@ -750,7 +759,7 @@ def run_gui(screenshot=None, qa_report=None):
                     "r.id,r.status,s.name,CASE WHEN r.property_key<>'' THEN r.property_key ELSE r.predicate END,COALESCE(o.name,r.value,''),r.source_message_id",
                     'r.status,s.name,r.predicate,r.property_key,o.name,r.value,r.evidence'),
                 'messages':('messages','id,role,conversation_id,text','role,conversation_id,text'),
-                'jobs':('analysis_jobs','id,status,attempts,COALESCE(error,\'\')','status,error')}
+                'jobs':('analysis_jobs',"id,status,attempts,COALESCE(claim_count,''),COALESCE(rejected_count,''),COALESCE(empty_reason,''),COALESCE(error,'')",'status,error,empty_reason')}
             source,columns,search_columns=queries[key]
             term=self.archive_search.text().strip()
             fields=search_columns.split(',')
@@ -764,6 +773,31 @@ def run_gui(screenshot=None, qa_report=None):
                 for j,value in enumerate(row):table.setItem(i,j,QTableWidgetItem(str(value if value is not None else '')))
             self.archive_page_label.setText(f'PAGE {self.archive_page+1} / {pages}  //  {total} RECORDS')
             self.archive_data_version=memory.db.execute('PRAGMA data_version').fetchone()[0]
+        @staticmethod
+        def format_analysis_summary(counts):
+            return ('ANALYSIS // PENDING {pending}  PROCESSING {processing}  COMPLETED {done}  FAILED {failed}\n'
+                    'UNRESOLVED CLAIMS {unresolved}  COMPLETED WITHOUT CLAIMS {empty}').format(**{
+                        key:counts.get(key,0) for key in ('pending','processing','done','failed','unresolved','empty')})
+        def refresh_inspector(self):
+            if not self.lab:return
+            diagnostics=self.lab.last_diagnostics
+            if not diagnostics:
+                self.inspector.setPlainText('No answer has been generated in this session.');return
+            selection=diagnostics.get('memory_selection',{})
+            delivered=[item['content'] for item in diagnostics.get('messages',[]) if item['role']=='system' and item['content'].startswith('Local memory:')]
+            details={'budget':diagnostics.get('budget',{}),'candidate_count':selection.get('candidate_count',0),
+                'found_candidates':selection.get('candidates',[]),'selected_with_sources':selection.get('selected_details',[]),
+                'excluded_with_reasons':selection.get('excluded',[]),
+                'exact_memory_payload':delivered}
+            self.inspector.setPlainText(json.dumps(details,ensure_ascii=False,indent=2))
+        def retry_selected_job(self):
+            if not self.lab or self.busy:return
+            table=self.tables['jobs'];row=table.currentRow()
+            if row<0 or table.item(row,1).text()!='failed':return
+            ident=int(table.item(row,0).text())
+            if QMessageBox.question(self,'Retry analysis',f'Retry failed analysis job #{ident}?')!=QMessageBox.Yes:return
+            if self.lab.memory.retry_job(ident):
+                self.refresh_archive();self.log_line(f'ANALYSIS JOB #{ident} RETRIED')
         def correct_property(self):
             if not self.lab or self.busy:return
             table=self.tables['relations'];row=table.currentRow()
@@ -809,10 +843,13 @@ def run_gui(screenshot=None, qa_report=None):
             if active and not self.busy:
                 try:
                     self.metrics['memories'].setText(str(self.lab.memory.db.execute("SELECT (SELECT COUNT(*) FROM memories WHERE status='active')+(SELECT COUNT(*) FROM relations WHERE status='active')").fetchone()[0]))
-                    self.metrics['jobs'].setText(str(self.lab.memory.job_counts().get('pending',0)))
+                    summary=self.lab.memory.analysis_summary()
+                    self.metrics['jobs'].setText(str(summary.get('pending',0)))
+                    self.analysis_status.setText(self.format_analysis_summary(summary))
                 except Exception:self.metrics['memories'].setText('—');self.metrics['jobs'].setText('—')
             else:
                 self.metrics['memories'].setText('—');self.metrics['jobs'].setText('—')
+                if not self.lab:self.analysis_status.setText('ANALYSIS // CORE OFFLINE')
             self.metrics['speed'].setText(f'{self.last_speed:.1f} t/s' if self.last_speed is not None else '—')
             self.metrics['latency'].setText(f'{self.last_time:.2f} s' if self.last_time is not None else '—')
             if self.gpu_process.state()==QProcess.NotRunning:
@@ -915,6 +952,7 @@ def run_gui(screenshot=None, qa_report=None):
                 window.lab.personality_warning=previous_warning
                 window.show_profile()
                 window.open_archive();report['checks']['archive_page']=window.pages.currentIndex()==3 and 'jobs' in window.tables and 'messages' in window.tables
+                report['checks']['analysis_statuses_visible']=all(name in window.archive_summary.text() for name in ('PENDING','PROCESSING','COMPLETED','FAILED','UNRESOLVED CLAIMS','COMPLETED WITHOUT CLAIMS'))
                 import sqlite3
                 archive_conversation=window.lab.memory.conversation()
                 with sqlite3.connect(window.lab.memory.path) as synthetic:
@@ -928,6 +966,8 @@ def run_gui(screenshot=None, qa_report=None):
                 report['checks']['archive_beyond_500']=window.archive_page==5 and window.tables['messages'].rowCount()==20
                 window.archive_search.setText('ITEM 519')
                 report['checks']['archive_search']=window.tables['messages'].rowCount()==1 and '519' in window.tables['messages'].item(0,3).text()
+                window.archive_tabs.setCurrentIndex(len(window.tables))
+                report['checks']['inspector_tab']=window.archive_tabs.tabText(len(window.tables))=='MEMORY INSPECTOR'
                 window.pages.setCurrentIndex(0)
                 if screenshot:window.grab().save(str(screenshot))
                 window.open_model()
@@ -970,6 +1010,10 @@ def run_gui(screenshot=None, qa_report=None):
                 report['checks']['queued_message_sent']='YOU > Say hello briefly.' in answer and not window.pending_prompts
                 bar=window.chat_view.verticalScrollBar()
                 report['checks']['auto_follow_latest']=bar.value()>=bar.maximum()-3
+                window.open_archive();window.archive_tabs.setCurrentIndex(len(window.tables));window.refresh_inspector()
+                inspector_text=window.inspector.toPlainText()
+                report['checks']['inspector_shows_payload_and_budget']='exact_memory_payload' in inspector_text and 'selected_with_sources' in inspector_text and 'budget' in inspector_text
+                window.open_model()
                 window.prompt.setText('Write a long technical essay about vacuum tube computers, at least 1000 words.');window.send()
                 state['phase']='interrupt';state['at']=time.monotonic()
             elif phase=='interrupt' and window.busy and time.monotonic()-state['at']>.7:
