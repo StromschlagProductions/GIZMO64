@@ -1,4 +1,6 @@
-# GIZMO Control Center 0.1 // LAB 0.5.0
+# GIZMO Control Center 0.1 // LAB 0.6.0
+
+LAB 0.6.0 ergänzt Hybrid Memory um quellgebundene Gesprächsepisoden. Themenwechsel und Sitzungsgrenzen bilden getrennte Episoden; reale, hypothetische und fiktionale Inhalte bleiben getrennt. ARCHIVE zeigt Episoden, Themen, ausdrücklich genannte Bedeutung, Quellen und Status. Episodentitel können lokal korrigiert und Episoden gelöscht werden. Details und Abnahme stehen im Repositorydokument `EPISODIC-MEMORY.md`.
 
 LAB 0.5.0 ergänzt den strukturierten Gedächtnisabruf um eine unabhängige Suche in den ursprünglichen Nutzernachrichten. SQLite FTS5 und das lokal installierte CPU-Embedding-Modell `multilingual-e5-small` suchen gemeinsam mit dem Wissensgraphen. Der Index wird nach Gesprächsanalyse schrittweise aufgebaut und nach einem Neustart fortgesetzt. Gelöschte, korrigierte, strittige und fiktionale Quellen bleiben vom Originalabruf ausgeschlossen. Technische Details und Messungen stehen im Repositorydokument `HYBRID-MEMORY.md`.
 

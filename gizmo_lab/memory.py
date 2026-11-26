@@ -79,8 +79,9 @@ MEMORY_POLICY = (
     'Connect facts about the same person. You may occasionally return to a relevant earlier topic. '
     'Do not invent missing details or claim to recall facts absent from memory or the conversation. '
     'Do not turn guesses, disputed claims or fiction in the conversation into real biography. '
-    'An earlier assistant answer is not evidence. Ask a follow-up only when it is needed. '
+    'An earlier assistant answer is not evidence. When a requested detail was never stated, answer only that it is unknown; do not offer possible values, speculation, examples, or a follow-up question. '
     'If information was deleted or corrected, do not reconstruct it from earlier dialogue. '
+    'Episode entries are grounded conversation records; fictional episodes are fictional, and an assistant quote is only what you actually said. '
     'Original user quotes are evidence when extraction missed a fact; interpret them in context, '
     'but do not treat a question or an unconfirmed statement as a confirmed fact.'
 )
@@ -98,7 +99,7 @@ def assemble_context(personality, clock, prompt, history, retrieve, config):
     fixed_cost=sum(map(message_cost,fixed))+message_cost(current)
     if output<=0 or available<=fixed_cost:
         raise ContextBudgetError('Persönlichkeit und aktuelle Nachricht überschreiten das sichere Kontextbudget. Bitte Nachricht kürzen oder num_ctx erhöhen; nichts wurde abgeschnitten.')
-    header='Local memory: fact/relation entries are confirmed. Original user quotes are source evidence, not extracted facts; interpret only explicit statements. Constraint entries are NOT established facts. Source IDs are provenance:\n'
+    header='Local memory: fact/relation entries are confirmed. Episodes are grounded conversations with explicit domains. Original user quotes are source evidence, not extracted facts; interpret only explicit statements. Constraint entries are NOT established facts. Source IDs are provenance:\n'
     memory_budget=max(0,min(int(config.get('memory_token_budget',900)),available-fixed_cost-token_bound(header)-32))
     memories,retrieval_s=retrieve(prompt,memory_budget,history[-8:])
     memory_message={'role':'system','content':header+'\n'.join(memories)}
@@ -151,6 +152,13 @@ CREATE TABLE IF NOT EXISTS relation_events(id INTEGER PRIMARY KEY, relation_id I
 CREATE TABLE IF NOT EXISTS analysis_jobs(id INTEGER PRIMARY KEY, message_id INTEGER NOT NULL UNIQUE, status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, error TEXT, claim_count INTEGER, rejected_count INTEGER, empty_reason TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(message_id) REFERENCES messages(id));
 CREATE TABLE IF NOT EXISTS embedding_jobs(message_id INTEGER PRIMARY KEY, status TEXT NOT NULL DEFAULT 'pending', error TEXT, FOREIGN KEY(message_id) REFERENCES messages(id));
 CREATE TABLE IF NOT EXISTS message_vectors(message_id INTEGER PRIMARY KEY, model_id TEXT NOT NULL, content_hash TEXT NOT NULL, dimensions INTEGER NOT NULL, vector BLOB NOT NULL, FOREIGN KEY(message_id) REFERENCES messages(id));
+CREATE TABLE IF NOT EXISTS episodes(id INTEGER PRIMARY KEY, conversation_id TEXT NOT NULL, start_message_id INTEGER NOT NULL UNIQUE, end_message_id INTEGER NOT NULL, title TEXT NOT NULL, summary TEXT NOT NULL, topics TEXT NOT NULL DEFAULT '', significance TEXT, domain TEXT NOT NULL, started_at TEXT NOT NULL, ended_at TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', version TEXT NOT NULL, importance INTEGER NOT NULL DEFAULT 1, FOREIGN KEY(conversation_id) REFERENCES conversations(id));
+CREATE TABLE IF NOT EXISTS episode_sources(episode_id INTEGER NOT NULL, message_id INTEGER NOT NULL, role TEXT NOT NULL, PRIMARY KEY(episode_id,message_id), FOREIGN KEY(episode_id) REFERENCES episodes(id), FOREIGN KEY(message_id) REFERENCES messages(id));
+CREATE TABLE IF NOT EXISTS episode_entities(episode_id INTEGER NOT NULL, entity_id INTEGER NOT NULL, PRIMARY KEY(episode_id,entity_id), FOREIGN KEY(episode_id) REFERENCES episodes(id), FOREIGN KEY(entity_id) REFERENCES entities(id));
+CREATE TABLE IF NOT EXISTS episode_events(id INTEGER PRIMARY KEY, episode_id INTEGER NOT NULL, action TEXT NOT NULL, old_value TEXT, new_value TEXT, created_at TEXT NOT NULL, FOREIGN KEY(episode_id) REFERENCES episodes(id));
+CREATE INDEX IF NOT EXISTS episode_sources_message ON episode_sources(message_id);
+CREATE INDEX IF NOT EXISTS episodes_conversation ON episodes(conversation_id,start_message_id);
+CREATE VIRTUAL TABLE IF NOT EXISTS episode_fts USING fts5(title,summary,entities,topics);
 CREATE INDEX IF NOT EXISTS memories_domain_key ON memories(domain,key,status);
 CREATE INDEX IF NOT EXISTS relations_subject ON relations(subject_id,predicate,status);
 CREATE INDEX IF NOT EXISTS memory_sources_message ON memory_sources(message_id);
@@ -160,6 +168,11 @@ CREATE VIRTUAL TABLE IF NOT EXISTS message_fts USING fts5(text,content='messages
 CREATE TRIGGER IF NOT EXISTS message_ai AFTER INSERT ON messages WHEN new.role='user' BEGIN INSERT INTO message_fts(rowid,text) VALUES(new.id,new.text); INSERT OR IGNORE INTO embedding_jobs(message_id) VALUES(new.id); END;
 CREATE TRIGGER IF NOT EXISTS message_ad AFTER DELETE ON messages WHEN old.role='user' BEGIN INSERT INTO message_fts(message_fts,rowid,text) VALUES('delete',old.id,old.text); DELETE FROM embedding_jobs WHERE message_id=old.id; DELETE FROM message_vectors WHERE message_id=old.id; END;
 CREATE TRIGGER IF NOT EXISTS message_au AFTER UPDATE OF text ON messages WHEN old.role='user' BEGIN INSERT INTO message_fts(message_fts,rowid,text) VALUES('delete',old.id,old.text); INSERT INTO message_fts(rowid,text) VALUES(new.id,new.text); INSERT INTO embedding_jobs(message_id,status,error) VALUES(new.id,'pending',NULL) ON CONFLICT(message_id) DO UPDATE SET status='pending',error=NULL; DELETE FROM message_vectors WHERE message_id=new.id; END;
+CREATE TRIGGER IF NOT EXISTS episode_message_au AFTER UPDATE OF text ON messages BEGIN
+  DELETE FROM episode_fts WHERE rowid IN (SELECT episode_id FROM episode_sources WHERE message_id=old.id);
+  UPDATE episodes SET status='invalid',title='[source unavailable]',summary='',topics='',significance=NULL WHERE id IN (SELECT episode_id FROM episode_sources WHERE message_id=old.id) AND status='active';
+  DELETE FROM episode_entities WHERE episode_id IN (SELECT episode_id FROM episode_sources WHERE message_id=old.id);
+END;
 CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(key,value,content='memories',content_rowid='id');
 CREATE TRIGGER IF NOT EXISTS memory_ai AFTER INSERT ON memories BEGIN INSERT INTO memory_fts(rowid,key,value) VALUES(new.id,new.key,new.value); END;
 CREATE TRIGGER IF NOT EXISTS memory_ad AFTER DELETE ON memories BEGIN INSERT INTO memory_fts(memory_fts,rowid,key,value) VALUES('delete',old.id,old.key,old.value); END;
@@ -210,6 +223,9 @@ class Memory:
         for column,definition in [('claim_count','INTEGER'),('rejected_count','INTEGER'),('empty_reason','TEXT')]:
             if column not in job_columns:
                 self.db.execute(f'ALTER TABLE analysis_jobs ADD COLUMN {column} {definition}')
+        episode_columns={row['name'] for row in self.db.execute('PRAGMA table_info(episodes)')}
+        for column,definition in [('topics',"TEXT NOT NULL DEFAULT ''"),('significance','TEXT')]:
+            if column not in episode_columns:self.db.execute(f'ALTER TABLE episodes ADD COLUMN {column} {definition}')
         fts_columns={row['name'] for row in self.db.execute('PRAGMA table_info(relation_fts)')}
         if 'property' not in fts_columns:
             self.db.execute('DROP TABLE relation_fts')
@@ -222,6 +238,16 @@ class Memory:
             if schema_version<8:
                 self.db.execute("INSERT INTO message_fts(message_fts) VALUES('rebuild')")
                 self.db.execute("INSERT OR IGNORE INTO embedding_jobs(message_id) SELECT id FROM messages WHERE role='user'")
+            if schema_version<9:
+                self.db.execute("INSERT OR IGNORE INTO lab_metadata(key,value) VALUES('episode_cursor','0')")
+            cursor_row=self.db.execute("SELECT value FROM lab_metadata WHERE key='episode_cursor'").fetchone()
+            try:
+                cursor_value=int(cursor_row[0]) if cursor_row else -1
+            except (TypeError,ValueError):
+                cursor_value=-1
+            if cursor_value<0:
+                processed=self.db.execute("SELECT COALESCE(MAX(message_id),0) FROM episode_sources WHERE role='user'").fetchone()[0]
+                self.db.execute("INSERT OR REPLACE INTO lab_metadata VALUES('episode_cursor',?)",(str(processed),))
             revision=self.db.execute("SELECT value FROM lab_metadata WHERE key='analysis_revision'").fetchone()
             self.retried_jobs=0
             self.reindexed_jobs=0
@@ -283,6 +309,131 @@ class Memory:
         counts['model_ready']=(e5_directory()/'onnx'/'model_int8.onnx').is_file()
         counts['error']=self.embedding_error
         return counts
+
+    def episode_status(self):
+        cursor=int(self.db.execute("SELECT value FROM lab_metadata WHERE key='episode_cursor'").fetchone()[0])
+        counts={row['status']:row['n'] for row in self.db.execute('SELECT status,COUNT(*) n FROM episodes GROUP BY status')}
+        counts['cursor']=cursor
+        counts['remaining']=self.db.execute("SELECT COUNT(*) FROM messages WHERE role='user' AND id>?",(cursor,)).fetchone()[0]
+        return counts
+
+    @staticmethod
+    def episode_words(text):
+        stop={'about','there','their','they','them','this','that','with','from','were','have','been','would','could','should','what','when','where','mein','meine','einen','einem','einer','über','diese','haben','hatte','wurde','the','and','for','are','our','was','ich','sie','der','die','das','und'}
+        names={w.casefold() for w in re.findall(r'\b[A-Z][a-z]{2,}\b',text)}
+        return {w.casefold() for w in re.findall(r'\w+',text) if len(w)>3 and w.casefold() not in stop and w.casefold() not in names}
+
+    def episode_domain(self,text,previous=None):
+        speculative,fictional=source_flags(text)
+        if fictional:return 'fiction'
+        if speculative:return 'hypothesis'
+        if previous=='fiction' and not re.search(r'\b(back to real life|in reality|out of character|zurück zur realität|wirklich)\b',text,re.I):
+            return 'fiction'
+        return 'real'
+
+    def episode_step(self):
+        """Persist at most one new user turn; safe to stop between steps."""
+        cursor=int(self.db.execute("SELECT value FROM lab_metadata WHERE key='episode_cursor'").fetchone()[0])
+        row=self.db.execute("SELECT id,conversation_id,text,created_at FROM messages WHERE role='user' AND id>? ORDER BY id LIMIT 1",(cursor,)).fetchone()
+        if not row:return False
+        prior=self.db.execute("SELECT * FROM episodes WHERE conversation_id=? ORDER BY start_message_id DESC LIMIT 1",(row['conversation_id'],)).fetchone()
+        domain=self.episode_domain(row['text'],prior['domain'] if prior else None)
+        previous=self.db.execute("SELECT m.id,m.text FROM episode_sources s JOIN messages m ON m.id=s.message_id WHERE s.episode_id=? AND s.role='user' ORDER BY m.id DESC LIMIT 1",(prior['id'],)).fetchone() if prior else None
+        same=False
+        if prior and prior['status']=='active' and prior['domain']==domain and prior['end_message_id']<row['id'] and row['id']-prior['end_message_id']<=3:
+            amount=self.db.execute("SELECT COUNT(*) FROM episode_sources WHERE episode_id=? AND role='user'",(prior['id'],)).fetchone()[0]
+            if amount<4 and previous:
+                left=self.episode_words(previous['text']);right=self.episode_words(row['text'])
+                same=bool(left&right) or bool(re.match(r'\s*(she|he|they|we|it|her|his|their|this|that|sie|er|wir|es|ihr)\b',row['text'],re.I)) or bool(re.search(r'\b(its|his|her|their|dessen|deren)\b',row['text'],re.I))
+                if re.match(r'\s*(now about|changing the subject|another topic|speaking of something else|neues thema|anderes thema|jetzt zu)\b',row['text'],re.I):same=False
+                if not same:
+                    pair=self.db.execute('SELECT message_id,vector FROM message_vectors WHERE message_id IN (?,?)',(previous['id'],row['id'])).fetchall()
+                    if len(pair)==2:
+                        import numpy as np
+                        same=float(np.dot(np.frombuffer(pair[0]['vector'],dtype=np.float32),np.frombuffer(pair[1]['vector'],dtype=np.float32)))>=.87
+        next_user=self.db.execute("SELECT id FROM messages WHERE conversation_id=? AND role='user' AND id>? ORDER BY id LIMIT 1",(row['conversation_id'],row['id'])).fetchone()
+        until=next_user['id'] if next_user else row['id']+3
+        segment=self.db.execute("SELECT id,role,text FROM messages WHERE conversation_id=? AND id>=? AND id<? ORDER BY id",(row['conversation_id'],row['id'],until)).fetchall()
+        if not same:
+            title=row['text'].split('\n',1)[0].strip()[:100] or 'Conversation'
+            with self.db:
+                self.db.execute("INSERT OR IGNORE INTO episodes(conversation_id,start_message_id,end_message_id,title,summary,domain,started_at,ended_at,status,version) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    (row['conversation_id'],row['id'],segment[-1]['id'],title,'',domain,row['created_at'],row['created_at'],'active',VERSION))
+            episode_id=self.db.execute('SELECT id FROM episodes WHERE start_message_id=?',(row['id'],)).fetchone()[0]
+        else:episode_id=prior['id']
+        if self.db.execute("SELECT status FROM episodes WHERE id=?",(episode_id,)).fetchone()[0]=='active':
+            with self.db:
+                for item in segment:
+                    self.db.execute('INSERT OR IGNORE INTO episode_sources VALUES(?,?,?)',(episode_id,item['id'],item['role']))
+                self.db.execute('UPDATE episodes SET end_message_id=?,ended_at=?,version=? WHERE id=?',(segment[-1]['id'],row['created_at'],VERSION,episode_id))
+                self.refresh_episode(episode_id)
+        with self.db:self.db.execute("INSERT OR REPLACE INTO lab_metadata VALUES('episode_cursor',?)",(str(row['id']),))
+        return True
+
+    def refresh_episode(self,episode_id):
+        episode=self.db.execute('SELECT * FROM episodes WHERE id=?',(episode_id,)).fetchone()
+        if episode['status']!='active':return
+        user=self.safe_episode_quotes(episode_id)
+        self.db.execute('DELETE FROM episode_fts WHERE rowid=?',(episode_id,))
+        if not user:
+            self.db.execute("UPDATE episodes SET status='invalid',title='[source unavailable]',summary='',topics='',significance=NULL WHERE id=?",(episode_id,))
+            self.db.execute('DELETE FROM episode_entities WHERE episode_id=?',(episode_id,))
+            self.db.execute("INSERT INTO episode_events(episode_id,action,created_at) VALUES(?,'source_invalidated',?)",(episode_id,utc_now()))
+            return
+        summary=' '.join('USER #'+str(r['id'])+': '+r['text'] for r in user)[:1600]
+        topics=' '.join(sorted(set().union(*(self.episode_words(r['text']) for r in user)))[:24])
+        significance=next((r['text'] for r in user if re.search(r'\b(important to me|meant a lot to me|meaningful to me|bedeutet mir viel|war mir wichtig|bedeutsam für mich)\b',r['text'],re.I)),None)
+        self.db.execute('DELETE FROM episode_entities WHERE episode_id=?',(episode_id,))
+        for r in user:
+            for entity in self.db.execute("""SELECT DISTINCT x.id FROM relations rel JOIN entities x ON x.id IN (rel.subject_id,rel.object_id)
+                LEFT JOIN relation_sources rs ON rs.relation_id=rel.id
+                WHERE (rel.source_message_id=? OR rs.message_id=?) AND rel.status='active' AND lower(x.name)<>'user'""",(r['id'],r['id'])):
+                self.db.execute('INSERT OR IGNORE INTO episode_entities VALUES(?,?)',(episode_id,entity['id']))
+        entities=' '.join(r[0] for r in self.db.execute('SELECT e.name FROM episode_entities x JOIN entities e ON e.id=x.entity_id WHERE x.episode_id=?',(episode_id,)))
+        self.db.execute('UPDATE episodes SET summary=?,topics=?,significance=?,importance=? WHERE id=?',(summary,topics,significance,2 if significance else 1,episode_id))
+        title=episode['title'] if user[0]['id']==episode['start_message_id'] else user[0]['text'][:100]
+        self.db.execute('INSERT INTO episode_fts(rowid,title,summary,entities,topics) VALUES(?,?,?,?,?)',(episode_id,title,summary,entities,topics))
+
+    def refresh_episodes_for_source(self,message_id):
+        for row in self.db.execute('SELECT episode_id FROM episode_sources WHERE message_id=?',(message_id,)):
+            self.refresh_episode(row['episode_id'])
+
+    def safe_episode_quotes(self,episode_id):
+        return [row for row in self.db.execute("SELECT m.id,m.text FROM episode_sources s JOIN messages m ON m.id=s.message_id WHERE s.episode_id=? AND s.role='user' ORDER BY m.id",(episode_id,))
+                if not self.source_blocked(row['id']) and not self.source_conflicted(row['id'])]
+
+    def episode_safe(self,episode_id):
+        return bool(self.safe_episode_quotes(episode_id))
+
+    def episode_display(self,episode_id):
+        row=self.db.execute('SELECT * FROM episodes WHERE id=?',(episode_id,)).fetchone()
+        if not row:return None
+        safe=self.safe_episode_quotes(episode_id) if row['status']=='active' else []
+        title=row['title'] if safe and safe[0]['id']==row['start_message_id'] else (safe[0]['text'][:100] if safe else '[source unavailable]')
+        return {'id':episode_id,'status':row['status'] if safe or row['status']!='active' else 'invalid',
+                'domain':row['domain'],'title':title,'summary':' '.join('USER #'+str(item['id'])+': '+item['text'] for item in safe),
+                'topics':' '.join(sorted(set().union(*(self.episode_words(item['text']) for item in safe)))[:24]) if safe else '',
+                'significance':row['significance'] if row['significance'] and any(row['significance']==item['text'] for item in safe) else None,
+                'started_at':row['started_at'],'ended_at':row['ended_at'],
+                'sources':[item['id'] for item in safe]}
+
+    def delete_episode(self,episode_id):
+        with self.db:
+            changed=self.db.execute("UPDATE episodes SET status='deleted',title='[deleted]',summary='',topics='',significance=NULL WHERE id=? AND status='active'",(episode_id,)).rowcount
+            if changed:
+                self.db.execute('DELETE FROM episode_fts WHERE rowid=?',(episode_id,))
+                self.db.execute("INSERT INTO episode_events(episode_id,action,created_at) VALUES(?,'manual_delete',?)",(episode_id,utc_now()))
+        return changed
+
+    def correct_episode_title(self,episode_id,title):
+        title=title.strip()[:100]
+        if not title:raise ValueError('Episode title required')
+        with self.db:
+            row=self.db.execute("SELECT title FROM episodes WHERE id=? AND status='active'",(episode_id,)).fetchone()
+            if not row:raise KeyError(episode_id)
+            self.db.execute('UPDATE episodes SET title=? WHERE id=?',(title,episode_id))
+            self.db.execute('INSERT INTO episode_events(episode_id,action,old_value,new_value,created_at) VALUES(?,?,?,?,?)',(episode_id,'manual_title',row['title'],title,utc_now()))
+            self.refresh_episode(episode_id)
 
     def embedding_engine(self):
         if self.embedding_error:return None
@@ -438,7 +589,9 @@ class Memory:
             UNION SELECT 1 FROM relation_sources s JOIN relations r ON r.id=s.relation_id
             WHERE s.message_id=? AND (r.status IN ('deleted','superseded') OR EXISTS
                 (SELECT 1 FROM relations d WHERE d.claim_key=r.claim_key AND d.status='deleted') OR EXISTS
-                (SELECT 1 FROM relation_events e WHERE e.relation_id=r.id AND e.action='manual_correction')) LIMIT 1""",(source_id,source_id,source_id)).fetchone())
+                (SELECT 1 FROM relation_events e WHERE e.relation_id=r.id AND e.action='manual_correction'))
+            UNION SELECT 1 FROM episode_sources s JOIN episodes e ON e.id=s.episode_id
+            WHERE s.message_id=? AND e.status='deleted' LIMIT 1""",(source_id,source_id,source_id,source_id)).fetchone())
 
     def add_relation(self,subject,subject_kind,predicate,obj,object_kind,value,source_id,evidence,confidence,status,scope='personal',property_key=''):
         subject=self.canonical_subject(subject)
@@ -505,6 +658,8 @@ class Memory:
                 self.db.execute("UPDATE relations SET scope='personal',confidence=1 WHERE id=?",(relation_id,))
             self.db.execute('INSERT INTO relation_events(relation_id,action,created_at) VALUES(?,?,?)',
                             (relation_id,'manual_'+status,utc_now()))
+            for source in self.db.execute('SELECT message_id FROM relation_sources WHERE relation_id=?',(relation_id,)):
+                self.refresh_episodes_for_source(source['message_id'])
 
     def correct_relation(self,relation_id,value):
         value=value.strip()
@@ -524,6 +679,8 @@ class Memory:
             self.db.execute('INSERT INTO relation_events(relation_id,action,old_value,new_value,old_claim_key,created_at) VALUES(?,?,?,?,?,?)',
                             (relation_id,'manual_correction',row['value'],value,old_key,stamp))
             self.index_relation(relation_id)
+            for source in self.db.execute('SELECT message_id FROM relation_sources WHERE relation_id=?',(relation_id,)):
+                self.refresh_episodes_for_source(source['message_id'])
         return True
 
     def recent(self, conversation_id, limit=20):
@@ -607,6 +764,8 @@ class Memory:
             self.db.execute("UPDATE memories SET value=?,status='active',confidence=1,updated_at=? WHERE id=?", (value,stamp,memory_id))
             self.db.execute('INSERT INTO memory_events(memory_id,action,old_value,new_value,created_at) VALUES(?,?,?,?,?)',
                             (memory_id,'manual_correction',row['value'],value,stamp))
+            for source in self.db.execute('SELECT message_id FROM memory_sources WHERE memory_id=?',(memory_id,)):
+                self.refresh_episodes_for_source(source['message_id'])
 
     def delete(self, memory_id):
         with self.db:
@@ -614,6 +773,8 @@ class Memory:
             if cur.rowcount:
                 self.db.execute('INSERT INTO memory_events(memory_id,action,created_at) VALUES(?,?,?)',
                                 (memory_id,'manual_delete',utc_now()))
+                for source in self.db.execute('SELECT message_id FROM memory_sources WHERE memory_id=?',(memory_id,)):
+                    self.refresh_episodes_for_source(source['message_id'])
         return cur.rowcount
 
     def list_memories(self, include_pending=False):
@@ -673,6 +834,46 @@ class Memory:
             if row and self.original_source_safe(ident,row['text']):
                 result.append((ident,row['conversation_id'],row['text'],scores[ident]))
         return result
+
+    def episode_matches(self,query,words,archive,limit=5):
+        scores={}
+        expression=' OR '.join('"'+word.replace('"','')+'"' for word in dict.fromkeys(words[:20]))
+        if expression:
+            try:
+                for rank,row in enumerate(self.db.execute("SELECT rowid FROM episode_fts WHERE episode_fts MATCH ? ORDER BY bm25(episode_fts) LIMIT 20",(expression,))):
+                    scores[row[0]]=90-rank
+            except sqlite3.OperationalError:pass
+        for rank,(message_id,*_) in enumerate(archive[:12]):
+            for row in self.db.execute('SELECT episode_id FROM episode_sources WHERE message_id=?',(message_id,)):
+                scores[row[0]]=max(scores.get(row[0],0),82-rank)
+        results=[];excluded=[]
+        for ident in sorted(scores,key=lambda key:-scores[key])[:limit*3]:
+            episode=self.db.execute('SELECT * FROM episodes WHERE id=?',(ident,)).fetchone()
+            if not episode or episode['status']!='active':
+                excluded.append({'id':'episode:'+str(ident),'reason':'deleted_or_invalid'})
+                continue
+            if episode['domain']=='fiction' and not re.search(r'\b(story|fiction|fictional|imagined|roleplay|geschichte|fiktion|erfunden|rollenspiel)\b',query,re.I):
+                overlap=self.episode_words(query)&self.episode_words(episode['summary'])
+                if len(overlap)<2:
+                    excluded.append({'id':'episode:'+str(ident),'reason':'fiction_not_relevant_to_question'})
+                    continue
+            if not self.episode_safe(ident):
+                excluded.append({'id':'episode:'+str(ident),'reason':'source_blocked_or_conflicted'})
+                continue
+            safe=self.safe_episode_quotes(ident)
+            quotes=[{'source':row['id'],'role':'user','quote':row['text']} for row in safe][:4]
+            if not quotes:continue
+            people=[row[0] for row in self.db.execute('SELECT e.name FROM episode_entities x JOIN entities e ON e.id=x.entity_id WHERE x.episode_id=?',(ident,))] if len(safe)==self.db.execute("SELECT COUNT(*) FROM episode_sources WHERE episode_id=? AND role='user'",(ident,)).fetchone()[0] else []
+            title=episode['title'] if safe[0]['id']==episode['start_message_id'] else safe[0]['text'][:100]
+            topics=' '.join(sorted(set().union(*(self.episode_words(item['text']) for item in safe)))[:24])
+            payload={'episode':ident,'domain':episode['domain'],'title':title,'time_start':episode['started_at'],'time_end':episode['ended_at'],'entities':people,'topics':topics,'user_quotes':quotes}
+            if episode['significance'] and any(episode['significance']==item['text'] for item in safe):payload['user_stated_significance']=episode['significance']
+            if re.search(r'\b(what did you say|what was your answer|gizmo said|your reply|was hast du gesagt|deine antwort)\b',query,re.I):
+                assistant=self.db.execute("SELECT m.id,m.text FROM episode_sources s JOIN messages m ON m.id=s.message_id WHERE s.episode_id=? AND s.role='assistant' ORDER BY m.id LIMIT 1",(ident,)).fetchone()
+                if assistant:payload['assistant_quote']={'source':assistant['id'],'quote':assistant['text']}
+            results.append((scores[ident],json.dumps(payload,ensure_ascii=False,separators=(',',':')),'episode:'+str(ident)))
+            if len(results)>=limit:break
+        return results,excluded
 
     def original_source_safe(self,ident,text):
         if self.source_blocked(ident) or self.source_conflicted(ident) or any(source_flags(text)):
@@ -860,6 +1061,9 @@ class Memory:
                 candidates.append((68,line,'archive:'+str(neighbor['id'])))
         if raw_role_evidence:
             candidates=[item for item in candidates if not item[2].startswith('constraint:has_')]
+        episode_candidates,episode_excluded=self.episode_matches(query,words,archive)
+        candidates.extend(episode_candidates)
+        excluded.extend(episode_excluded)
         if frontier:
             markers=','.join('?' for _ in frontier)
             guards=set()

@@ -272,7 +272,12 @@ class Analyzer:
             if self.pause_event.is_set():
                 self.stop_event.wait(.25)
                 continue
-            if self.analyze_one():
-                continue
-            if self.pause_event.is_set() or self.stop_event.is_set() or not self.memory.index_next_embedding():
+            analyzed=self.analyze_one()
+            indexed=False
+            if not self.pause_event.is_set() and not self.stop_event.is_set():
+                indexed=self.memory.index_next_embedding()
+            episode=False
+            if not self.pause_event.is_set() and not self.stop_event.is_set():
+                episode=self.memory.episode_step()
+            if not analyzed and not indexed and not episode:
                 self.stop_event.wait(.25)

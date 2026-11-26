@@ -1,5 +1,11 @@
 # GIZMO Control Center 0.1 – lokaler Entwicklungs- und Produktivbetrieb
 
+## Episodic Memory 0.6.0
+
+Episoden werden inkrementell aus Originalgesprächen gebildet und im ARCHIVE mit Domäne, Themen, ausdrücklich genannter Bedeutung und Quellen angezeigt. Reale, hypothetische und fiktionale Episoden bleiben getrennt. Die vollständige synthetische Gemma-QA prüft Abruf nach Neustart, einen nicht genannten Detailwert, Korrektur/Löschung und Studio-Safe-Abschaltung. Das Repositorydokument `EPISODIC-MEMORY.md` enthält Architektur und Messwerte.
+
+**Offener Prüfpunkt:** Die Messung mit 50.000 synthetischen Nachrichten umfasste den vollständigen Episodenaufbau, aber nur zwei echte Nachrichtenvektoren. Aufbauzeit, RAM-Bedarf und Suchlatenz einer vollständig mit 50.000 oder mehr Embeddings indizierten Sammlung sind noch gesondert zu prüfen.
+
 PC-seitige Entwicklung und reale Modelltests erfolgen lokal unter Windows. Der C64-Client und die produktive Brücke gehören nicht zu diesem Update.
 
 ## Alltag

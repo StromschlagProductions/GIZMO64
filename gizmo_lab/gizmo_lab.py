@@ -545,7 +545,7 @@ def run_gui(screenshot=None, qa_report=None):
             self.archive_summary=self.label('ANALYSIS // CORE OFFLINE','dim');self.archive_summary.setWordWrap(True);layout.addWidget(self.archive_summary)
             search_row=QHBoxLayout();self.archive_search=QLineEdit();self.archive_search.setPlaceholderText('Search archive...')
             self.archive_search.textChanged.connect(self.reset_archive_page);search_row.addWidget(self.archive_search);layout.addLayout(search_row)
-            for key,columns in [('memories',['ID','STATUS','DOMAIN','KEY','VALUE']),('entities',['ID','STATUS','KIND','NAME']),('relations',['ID','STATUS','SUBJECT','RELATION','TARGET','SOURCE']),('messages',['ID','ROLE','CONVERSATION','TEXT']),('jobs',['ID','STATUS','ATTEMPTS','CLAIMS','REJECTED','EMPTY REASON','ERROR'])]:
+            for key,columns in [('memories',['ID','STATUS','DOMAIN','KEY','VALUE']),('entities',['ID','STATUS','KIND','NAME']),('relations',['ID','STATUS','SUBJECT','RELATION','TARGET','SOURCE']),('episodes',['ID','STATUS','DOMAIN','TITLE','TIME','TOPICS','SIGNIFICANCE','SOURCES']),('messages',['ID','ROLE','CONVERSATION','TEXT']),('jobs',['ID','STATUS','ATTEMPTS','CLAIMS','REJECTED','EMPTY REASON','ERROR'])]:
                 table=QTableWidget(0,len(columns));table.setHorizontalHeaderLabels(columns);table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch);table.setEditTriggers(QTableWidget.NoEditTriggers)
                 self.archive_tabs.addTab(table,key.upper());self.tables[key]=table
             self.inspector=QTextEdit();self.inspector.setReadOnly(True);self.archive_tabs.addTab(self.inspector,'MEMORY INSPECTOR')
@@ -561,9 +561,12 @@ def run_gui(screenshot=None, qa_report=None):
             correct_relation=QPushButton('CORRECT PROPERTY');correct_relation.clicked.connect(self.correct_property)
             remove_relation=QPushButton('DELETE RELATION');remove_relation.setObjectName('shutdown');remove_relation.clicked.connect(lambda:self.change_relation('deleted'))
             retry_job=QPushButton('RETRY FAILED JOB');retry_job.clicked.connect(self.retry_selected_job)
+            correct_episode=QPushButton('CORRECT EPISODE TITLE');correct_episode.clicked.connect(self.correct_episode)
+            delete_episode=QPushButton('DELETE EPISODE');delete_episode.setObjectName('shutdown');delete_episode.clicked.connect(self.delete_episode)
             row.addWidget(refresh);row.addWidget(edit);row.addWidget(delete);layout.addLayout(row)
             relations_row=QHBoxLayout();relations_row.addWidget(approve);relations_row.addWidget(correct_relation);relations_row.addWidget(remove_relation);layout.addLayout(relations_row)
             layout.addWidget(retry_job)
+            episodes_row=QHBoxLayout();episodes_row.addWidget(correct_episode);episodes_row.addWidget(delete_episode);layout.addLayout(episodes_row)
             layout.addWidget(self.label('Deletion requires confirmation. The archive stays on this PC.','dim'))
         def log_line(self,text):
             self.log.append(datetime.now().strftime('%H:%M:%S')+'  '+text)
@@ -748,10 +751,28 @@ def run_gui(screenshot=None, qa_report=None):
             if not self.lab or self.busy:return
             memory=self.lab.memory
             summary=memory.analysis_summary()
-            self.archive_summary.setText(self.format_analysis_summary(summary)+'\n'+self.format_embedding_summary(memory.embedding_status()))
+            episodes=memory.episode_status()
+            self.archive_summary.setText(self.format_analysis_summary(summary)+'\n'+self.format_embedding_summary(memory.embedding_status())+
+                '\nEPISODES // ACTIVE '+str(episodes.get('active',0))+'  REMAINING '+str(episodes.get('remaining',0)))
             if self.archive_tabs.currentIndex()>=len(self.tables):
                 self.refresh_inspector();self.archive_data_version=memory.db.execute('PRAGMA data_version').fetchone()[0];return
             key=list(self.tables)[self.archive_tabs.currentIndex()]
+            if key=='episodes':
+                term=self.archive_search.text().strip().casefold()
+                where=" WHERE lower(title) LIKE ? OR lower(summary) LIKE ?" if term else ''
+                args=['%'+term+'%']*2 if term else []
+                total=memory.db.execute('SELECT COUNT(*) FROM episodes'+where,args).fetchone()[0]
+                pages=max(1,(total+99)//100);self.archive_page=min(self.archive_page,pages-1)
+                rows=memory.db.execute('SELECT id FROM episodes'+where+' ORDER BY id DESC LIMIT 100 OFFSET ?',args+[self.archive_page*100]).fetchall()
+                shown=[memory.episode_display(row['id']) for row in rows]
+                shown=[item for item in shown if item and (not term or term in (item['title']+' '+item['summary']).casefold())]
+                table=self.tables[key];table.setRowCount(len(shown))
+                for i,item in enumerate(shown):
+                    for j,value in enumerate((item['id'],item['status'],item['domain'],item['title'],item['started_at'],item['topics'],item['significance'] or '',','.join(map(str,item['sources'])))):
+                        table.setItem(i,j,QTableWidgetItem(str(value)))
+                self.archive_page_label.setText(f'PAGE {self.archive_page+1} / {pages}  //  {total} RECORDS')
+                self.archive_data_version=memory.db.execute('PRAGMA data_version').fetchone()[0]
+                return
             queries={
                 'memories':('memories','id,status,domain,key,value','status,domain,key,value'),
                 'entities':('entities','id,status,kind,name','status,kind,name'),
@@ -790,7 +811,7 @@ def run_gui(screenshot=None, qa_report=None):
                 self.inspector.setPlainText('No answer has been generated in this session.');return
             selection=diagnostics.get('memory_selection',{})
             delivered=[item['content'] for item in diagnostics.get('messages',[]) if item['role']=='system' and item['content'].startswith('Local memory:')]
-            details={'budget':diagnostics.get('budget',{}),'candidate_count':selection.get('candidate_count',0),
+            details={'budget':diagnostics.get('budget',{}),'episode_index':self.lab.memory.episode_status(),'candidate_count':selection.get('candidate_count',0),
                 'found_candidates':selection.get('candidates',[]),'selected_with_sources':selection.get('selected_details',[]),
                 'excluded_with_reasons':selection.get('excluded',[]),
                 'exact_memory_payload':delivered}
@@ -803,6 +824,22 @@ def run_gui(screenshot=None, qa_report=None):
             if QMessageBox.question(self,'Retry analysis',f'Retry failed analysis job #{ident}?')!=QMessageBox.Yes:return
             if self.lab.memory.retry_job(ident):
                 self.refresh_archive();self.log_line(f'ANALYSIS JOB #{ident} RETRIED')
+        def correct_episode(self):
+            if not self.lab or self.busy:return
+            table=self.tables['episodes'];row=table.currentRow()
+            if row<0:return
+            ident=int(table.item(row,0).text());old=table.item(row,3).text()
+            value,accepted=QInputDialog.getText(self,'Correct episode title','Grounded title:',text=old)
+            if not accepted or not value.strip() or value.strip()==old:return
+            if QMessageBox.question(self,'Confirm episode title',f'Correct title of episode #{ident}?')!=QMessageBox.Yes:return
+            self.lab.memory.correct_episode_title(ident,value);self.refresh_archive()
+        def delete_episode(self):
+            if not self.lab or self.busy:return
+            table=self.tables['episodes'];row=table.currentRow()
+            if row<0:return
+            ident=int(table.item(row,0).text())
+            if QMessageBox.question(self,'Confirm episode deletion',f'Delete episode #{ident}? Original conversation remains stored.')!=QMessageBox.Yes:return
+            self.lab.memory.delete_episode(ident);self.refresh_archive()
         def correct_property(self):
             if not self.lab or self.busy:return
             table=self.tables['relations'];row=table.currentRow()
@@ -975,6 +1012,9 @@ def run_gui(screenshot=None, qa_report=None):
                 report['checks']['inspector_tab']=window.archive_tabs.tabText(len(window.tables))=='MEMORY INSPECTOR'
                 window.pages.setCurrentIndex(0)
                 if screenshot:window.grab().save(str(screenshot))
+                # The automated call bypasses a real navigation click, which
+                # normally activates the window before focus is assessed.
+                window.raise_();window.activateWindow();QApplication.processEvents()
                 window.open_model()
                 report['checks']['focus_on_open']=window.prompt.hasFocus()
                 for number in range(80):window.chat_view.append(f'SYNTHETIC SCROLL ROW {number}')
