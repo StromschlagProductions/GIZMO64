@@ -52,7 +52,9 @@ def main() -> None:
              "f3-f5-next": ("GIZMO64-DISPLAY-STANDARD.PRG", r"\x86\x87"),
              "f3-f7-live": ("GIZMO64-DISPLAY-STANDARD.PRG", r"\x86\x88"),
              "f8-service": ("GIZMO64-DISPLAY-STANDARD.PRG", r"\x8c"),
-             "help-command": ("GIZMO64-DISPLAY-STANDARD.PRG", r"HELP\x0d")}
+             "help-command": ("GIZMO64-DISPLAY-STANDARD.PRG", r"HELP\x0d"),
+             "menu-keyboard": ("GIZMO64-DISPLAY-STANDARD.PRG", r"HELP\x0d\x11\x11\x0d"),
+             "menu-qwertz-input": ("GIZMO64-DISPLAY-STANDARD.PRG", r"HELP\x0d\x11\x11\x0d\x8c\x8cYZ")}
     images = {name: BUILD / f"display-{name}.png" if args.reuse else
               capture(name, program, keys)
               for name, (program, keys) in cases.items()}
@@ -81,12 +83,25 @@ def main() -> None:
         count = green_count(menu_rows, 44, 225)
         if count >= maximum or count < 500:
             raise RuntimeError(f"{name} did not show its distinct view")
+    _, menu_rows = png_rows(images["menu-keyboard"])
+    if green_count(menu_rows, 76, 84) < 1000:
+        raise RuntimeError("Cursor/RETURN did not select inverse KEYBOARD row")
+    _, mapped_rows = png_rows(images["menu-qwertz-input"])
+    font = (ROOT / "assets/display-prototype.bin").read_bytes()
+    for char, screen_x in ((26, 88), (25, 96)):  # Z then Y in the input line
+        # VICE's exit frame can capture the first scanline during a cursor redraw.
+        for row in range(1, 7):
+            mask = font[char*8+row]
+            for bit in range(8):
+                actual = mapped_rows[227+row][(screen_x+bit)*4+1] > 50
+                if actual != bool(mask & (0x80 >> bit)):
+                    raise RuntimeError("QWERTZ did not map typed YZ to ZY")
     result = {name: {"path": str(path.relative_to(ROOT)),
                      "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
               for name, path in images.items()}
     (BUILD / "display-key-manifest.json").write_text(
         json.dumps(result, indent=2) + "\n", encoding="utf-8")
-    print("Palette, size, scrollback, fallback, service and HELP verified in VICE")
+    print("Palette, size, scrollback, fallback, service, menu and QWERTZ verified in VICE")
 
 
 if __name__ == "__main__":

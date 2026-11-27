@@ -70,6 +70,12 @@ static void keyboard(void)
     if ((c == 0xc8 || c == 'H') && (*(volatile unsigned char *)0x028d & 0x02)) {
         ui_help_toggle();return;
     }
+    if (ui_menu_active()) {
+        if (c==0x91) ui_menu_move(-1);
+        else if (c==0x11) ui_menu_move(1);
+        else if (c==13) ui_menu_activate();
+        return;
+    }
     ui_key_sound();
     if (c == 13) {
         if (!link_waiting || ui_service_active()) execute();
@@ -84,6 +90,7 @@ static void keyboard(void)
     }
 #ifdef __CC65__
     if (c >= 0x41 && c <= 0x5a) c += 128;
+    c=ui_keyboard_map(c);
     if (!((c >= 0xc1 && c <= 0xda) || (c >= 32 && c <= 64) ||
           (c >= 91 && c <= 95))) return;
 #else

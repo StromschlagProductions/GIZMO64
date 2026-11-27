@@ -1,5 +1,6 @@
 /* Experimental VIC-II bitmap presentation. Transport remains in src/link.c. */
 #include <string.h>
+#include <cbm.h>
 #include "ui.h"
 #include "ui_bitmap.h"
 #include "link.h"
@@ -14,6 +15,9 @@ extern const unsigned char gizmo_font[2048];
 extern const unsigned char display_assets[3776];
 extern void border_irq_install(void);
 extern unsigned char border_sprites_enabled;
+extern unsigned char *bitmap_src,*bitmap_dst;
+extern unsigned char bitmap_count,bitmap_low;
+extern void bitmap_blit(void);
 
 static const unsigned char foreground[2]={5,3};
 static const unsigned char accent[2]={13,14};
@@ -29,9 +33,38 @@ static unsigned char history_start,history_count,view_start,live=1;
 static unsigned char draft[40],draft_col,gizmo_first=1;
 static unsigned char service_lines[8][40],service_start,service_count;
 static unsigned char palette,mode,menu,service,safe_logo,batch_render;
+static unsigned char menu_choice,keymap;
+static unsigned char prefs[8],prefs_result;
 static unsigned char waiting,sound_enabled,sound_ticks,memory_count=255;
 static unsigned char cursor_on=1,pulse,phase,previous_raster=255,last_state=255;
 static const char *editor_text="";
+
+static unsigned char prefs_valid(void)
+{
+    unsigned char i,check=0;
+    for (i=0;i<7;++i) check^=prefs[i];
+    return prefs[0]=='G' && prefs[1]=='Z' && prefs[2]=='P' &&
+           prefs[3]==1 && prefs[4]<2 && prefs[5]<3 && prefs[6]<2 &&
+           prefs[7]==check;
+}
+
+static void prefs_load(void)
+{
+    if (cbm_load("GIZMOPRF",8,prefs)==8 && prefs_valid()) {
+        palette=prefs[4];mode=prefs[5];keymap=prefs[6];
+    }
+}
+
+static void prefs_save(void)
+{
+    unsigned char i,check=0;
+    if (link_waiting) {prefs_result=3;return;}
+    prefs[0]='G';prefs[1]='Z';prefs[2]='P';prefs[3]=1;
+    prefs[4]=palette;prefs[5]=mode;prefs[6]=keymap;
+    for (i=0;i<7;++i) check^=prefs[i];
+    prefs[7]=check;
+    prefs_result=cbm_save("@0:GIZMOPRF",8,prefs,8) ? 2 : 1;
+}
 
 static unsigned char code(unsigned char c)
 {
@@ -49,11 +82,13 @@ static volatile unsigned char *pixel_byte(unsigned char x,unsigned char y)
 
 static void glyph(unsigned char x,unsigned char y,unsigned char c)
 {
-    unsigned char row;
     const unsigned char *source=display_assets+(unsigned int)mode*1024+(unsigned int)c*8;
-    if (x>=40) return;
-    for (row=0;row<ink_rows[mode];++row)
-        if ((unsigned int)y+row<200) *pixel_byte(x,y+row)=source[row];
+    if (x>=40 || y>=200) return;
+    bitmap_src=(unsigned char *)source;
+    bitmap_dst=(unsigned char *)pixel_byte(x,y);
+    bitmap_count=ink_rows[mode];
+    bitmap_low=y&7;
+    bitmap_blit();
     link_poll();
 }
 
@@ -90,6 +125,29 @@ static void line_at(unsigned char row,const unsigned char *line)
 {
     unsigned char x,y=top()+row*heights[mode];
     for (x=0;x<40;++x) if (line[x]!=32) glyph(x,y,line[x]);
+}
+
+/* Move only the conversation raster. The bitmap is interleaved in 8-pixel
+   VIC rows; the aligned STANDARD mode can copy whole 320-byte blocks. */
+static void scroll_raster(unsigned char rows)
+{
+    unsigned char h=heights[mode],y,x;
+    unsigned char first=top(),last=first+rows*h;
+    if (h==8) {
+        for (y=first;y<last-h;y+=8) {
+            memcpy((void *)(BITMAP+bitmap_rows[y>>3]),
+                   (const void *)(BITMAP+bitmap_rows[(y+8)>>3]),320);
+            link_poll();
+        }
+        memset((void *)(BITMAP+bitmap_rows[(last-h)>>3]),0,320);
+    } else {
+        for (y=first;y<last-h;++y) {
+            for (x=0;x<40;++x) *pixel_byte(x,y)=*pixel_byte(x,y+h);
+            if ((y&3)==0) link_poll();
+        }
+        for (;y<last;++y) for (x=0;x<40;++x) *pixel_byte(x,y)=0;
+    }
+    link_poll();
 }
 
 static void draw_safe_logo(void)
@@ -151,20 +209,25 @@ static void draw_service(void)
 
 static void draw_menu(void)
 {
-    unsigned char h=heights[mode];
-    text(0,0,"GIZMO // HELP");
-    text(0,h*2,"F1  CHANGE COLOR");
-    text(0,h*3,"F2  SMALLER TEXT");
-    text(0,h*4,"F3  PREVIOUS PAGE");
-    text(0,h*5,"F4  LARGER TEXT");
-    text(0,h*6,"F5  NEXT PAGE");
-    text(0,h*7,"F6  SAFE LOGO / BORDER LOGO");
-    text(0,h*8,"F7  LIVE CONVERSATION");
-    text(0,h*9,"F8  TECHNICAL SERVICE");
-    text(0,h*10,"COMMODORE+H  CLOSE HELP");
-    text(0,h*12,"SERVICE: DIAG HEX IP UPLINK OFFLINE");
-    text(0,h*13,"SERVICE: PING STATUS CLS SOUND");
-    text(0,h*15,"SOUND IS OFF UNTIL ENABLED IN SERVICE");
+    unsigned char h=heights[mode],x,y;
+    text(0,0,"GIZMO // OPTIONS");
+    text(1,h*2,"COLOR");text(18,h*2,palette ? "ICE BLUE" : "GREEN");
+    text(1,h*3,"TEXT SIZE");text(18,h*3,mode==0 ? "STANDARD" : mode==1 ? "COMPACT" : "DENSE");
+    text(1,h*4,"KEYBOARD");text(18,h*4,keymap ? "QWERTZ" : "QWERTY");
+    text(1,h*5,"LOGO");text(18,h*5,safe_logo ? "SAFE" : "BORDER");
+    text(1,h*6,"SOUND");text(18,h*6,sound_enabled ? "ON" : "OFF");
+    text(1,h*7,"SAVE SETTINGS TO DRIVE 8");
+    y=(menu_choice+2)*h;
+    for (x=0;x<40;++x) {
+        unsigned char scan;
+        for (scan=0;scan<h;++scan) *pixel_byte(x,y+scan)^=0xff;
+    }
+    text(0,h*9,"CURSOR UP/DOWN // RETURN TO CHANGE");
+    text(0,h*11,"F3/F5 SCROLLBACK  F7 LIVE  F8 SERVICE");
+    text(0,h*12,"COMMODORE+H  CLOSE OPTIONS");
+    if (prefs_result==1) text(0,h*14,"SETTINGS SAVED ON DRIVE 8");
+    else if (prefs_result==2) text(0,h*14,"SAVE FAILED // CHECK DRIVE 8");
+    else if (prefs_result==3) text(0,h*14,"SAVE LATER // GIZMO IS ANSWERING");
 }
 
 static void redraw(void)
@@ -193,6 +256,7 @@ static void redraw(void)
 static void commit(void)
 {
     unsigned char x,index,rows=ui_visible_rows();
+    unsigned char was_live=live,was_full=history_count>=rows;
     if (history_count==HISTORY_LINES) {
         if (!live && view_start) --view_start;
         ++history_start;if (history_start==HISTORY_LINES) history_start=0;
@@ -201,7 +265,10 @@ static void commit(void)
     for (x=0;x<40;++x) history[index][x]=x<draft_col ? draft[x] : 32;
     draft_col=0;
     if (live) view_start=history_count>rows ? history_count-rows : 0;
-    if (!menu && !service && !batch_render) redraw();
+    if (menu || service || batch_render || !was_live) return;
+    if (link_state!=LINK_ONLINE) {redraw();return;}
+    if (was_full) scroll_raster(rows);
+    line_at(was_full ? rows-1 : history_count-1,history[index]);
 }
 
 static void put_char(unsigned char c)
@@ -278,6 +345,45 @@ void ui_scroll_live(void)
 unsigned char ui_service_toggle(void) {service=!service;menu=0;redraw();return service;}
 unsigned char ui_service_active(void) {return service;}
 void ui_help_toggle(void) {menu=!menu;service=0;redraw();}
+unsigned char ui_menu_active(void) {return menu;}
+unsigned char ui_keyboard_layout(void) {return keymap;}
+unsigned char ui_keyboard_map(unsigned char c)
+{
+    if (!keymap) return c;
+    if (c=='Y') return 'Z';
+    if (c=='Z') return 'Y';
+    if (c=='y') return 'z';
+    if (c=='z') return 'y';
+    if (c==0xd9) return 0xda;
+    if (c==0xda) return 0xd9;
+    return c;
+}
+void ui_menu_move(signed char direction)
+{
+    if (!menu) return;
+    if (direction<0) menu_choice=menu_choice ? menu_choice-1 : 5;
+    else menu_choice=menu_choice==5 ? 0 : menu_choice+1;
+    redraw();
+}
+void ui_menu_activate(void)
+{
+    if (!menu) return;
+    switch (menu_choice) {
+        case 0: ui_theme();break;
+        case 1:
+            if (mode==2) {
+                mode=0;
+                if (live) view_start=history_count>ui_visible_rows() ?
+                    history_count-ui_visible_rows() : 0;
+                redraw();
+            } else ui_smaller();
+            break;
+        case 2: keymap^=1;redraw();break;
+        case 3: ui_border_toggle();break;
+        case 4: ui_sound_toggle();redraw();break;
+        case 5: prefs_save();redraw();break;
+    }
+}
 void ui_border_toggle(void)
 {
     if (!REG(0x02a6)) return; /* NTSC: keep the reliable in-screen logo. */
@@ -339,6 +445,7 @@ void ui_tick(unsigned char active)
 void ui_init(void)
 {
     unsigned int i;unsigned char s;unsigned int x;
+    prefs_load();
     safe_logo=REG(0x02a6) ? 0 : 1; /* PAL border; NTSC safe in-screen logo. */
     REG(0xdd02)|=3;
     REG(0xdd00)=(REG(0xdd00)&0xfc)|1; /* VIC bank 2: $8000-$bfff. */

@@ -15,7 +15,8 @@ BUILD = ROOT / "build"
 CC65 = ROOT / ".local-tools/cc65/bin/cl65.exe"
 VICE = ROOT / ".local-tools/vice/SDL2VICE-3.9-win64/x64sc.exe"
 SOURCES = ["src/main_bitmap.c", "src/ui_bitmap.c", "src/link.c",
-           "src/font.s", "src/display_assets.s", "src/border_irq.s"]
+           "src/font.s", "src/display_assets.s", "src/border_irq.s",
+           "src/bitmap_blit.s"]
 
 
 def run(*args: str, cwd: Path = ROOT) -> subprocess.CompletedProcess[str]:
