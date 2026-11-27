@@ -478,6 +478,8 @@ class StoryDirector:
                r'hide|listen|investigate|explore|choose|turn|unlock|knock|'
                r'untersuche|schaue|suche|öffne|schließe|nehme|gehe|frage|'
                r'spreche|lese|drücke|ziehe|lege|folge|betrete|verlasse')
+        if re.match(r'^(?:(?:please|bitte) )?(?:tell|show) (?:me|us)\b|^(?:sag|zeig|erzähl) (?:mir|uns)\b',value):
+            return 'dialogue'
         if re.match(rf'^(?:i |ich |we |wir |let\'s |lass uns )(?:will |would like to |want to |am going to |möchte |werde )?(?:carefully |slowly |quietly |quickly |vorsichtig |leise )?(?:{verbs})\b',value):
             return 'action'
         if re.match(rf'^(?:can|could|would) you (?:please )?(?:{verbs})\b',value) and not re.match(r'^(?:can|could|would) you (?:please )?(?:tell|show) me\b',value):

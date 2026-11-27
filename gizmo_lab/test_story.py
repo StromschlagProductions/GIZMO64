@@ -163,6 +163,11 @@ class StoryTest(unittest.TestCase):
         self.assertEqual(route('Open the door.',True),'action')
         self.assertEqual(route('Could you open the door?',True),'action')
         self.assertEqual(route('Can you tell me what we know?',True),'dialogue')
+        self.assertEqual(route('Tell me what you see',True),'dialogue')
+        self.assertEqual(route('Tell me what we already know.',True),'dialogue')
+        self.assertEqual(route('Show me what you noticed.',True),'dialogue')
+        self.assertEqual(route('Please tell me what you see.',True),'dialogue')
+        self.assertEqual(route('Tell the witness about the key.',True),'action')
         self.assertEqual(route('I wonder what the door means.',True),'dialogue')
         self.assertEqual(route('Open the door.',False),'normal')
 
@@ -177,6 +182,21 @@ class StoryTest(unittest.TestCase):
                 self.assertEqual(result['abort_reason'],'story_validation_failed')
                 self.assertEqual(visible,['The fictional reply could not be safely shown.'])
                 self.assertEqual(lab.story.db.execute('SELECT COUNT(*) FROM dialogue').fetchone()[0],0)
+            finally:
+                lab.story.close();lab.memory.close()
+
+    def test_tell_me_uses_one_dialogue_call_and_does_not_change_world(self):
+        with tempfile.TemporaryDirectory() as folder:
+            model=FakeModel();lab=self.setup_lab(folder,model)
+            try:
+                lab.chat('/story')
+                before=len(model.payloads)
+                turn=lab.story.world()['turn']
+                result=lab.chat('Tell me what you see')
+                self.assertEqual(result['abort_reason'],'completed')
+                self.assertEqual(result['story_metrics']['route'],'dialogue')
+                self.assertEqual(len(model.payloads),before+1)
+                self.assertEqual(lab.story.world()['turn'],turn)
             finally:
                 lab.story.close();lab.memory.close()
 
