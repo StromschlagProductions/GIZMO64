@@ -1,0 +1,38 @@
+{
+  "f2-switch": {
+    "path": "screenshots/experimental-display/f2-switch.png",
+    "sha256": "9483d56a559e46c72ea20da05cce605ac936848f733682ba58de7a12e6c4c503"
+  },
+  "f4-switch": {
+    "path": "screenshots/experimental-display/f4-switch.png",
+    "sha256": "cca04708e5cd2a786edc7076a7b86435e355f14d75e6d45a8dbd4006b8bf75bf"
+  },
+  "f6-fallback": {
+    "path": "screenshots/experimental-display/f6-fallback.png",
+    "sha256": "892881da07385fcb288ec8c0d4c2551f924ad1b9277d277b8495cd02709645c1"
+  },
+  "f1-ice": {
+    "path": "screenshots/experimental-display/f1-ice.png",
+    "sha256": "3c73d9046ffa68a035c108624b6d31b33e59d57e15370b85a1bfdb46c7099a1f"
+  },
+  "f3-back": {
+    "path": "screenshots/experimental-display/f3-back.png",
+    "sha256": "224053a3c462770dbb4b999cb3dab06dbfcbabdeffdba488f9274f690cfb0853"
+  },
+  "f3-f5-next": {
+    "path": "screenshots/experimental-display/f3-f5-next.png",
+    "sha256": "714466dde37db170efb9346e59a6316004baac84d8987a3bc693205f0770fbb9"
+  },
+  "f3-f7-live": {
+    "path": "screenshots/experimental-display/f3-f7-live.png",
+    "sha256": "894f9c53001fe399856ff7cae73eb8f9e0a1173eb1ac813dd3d9d8d2aa8c92b8"
+  },
+  "f8-service": {
+    "path": "screenshots/experimental-display/f8-service.png",
+    "sha256": "791d7310e65a85b3a9977613d4721e0ca2b9a191157f282953440253763bc1f5"
+  },
+  "help-command": {
+    "path": "screenshots/experimental-display/help-command.png",
+    "sha256": "12300122f76ad2e5b357f40e461ca83de91840f909f028878ff210a7315ba461"
+  }
+}

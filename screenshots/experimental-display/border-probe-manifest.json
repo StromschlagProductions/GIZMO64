@@ -1,0 +1,18 @@
+{
+  "emulator": "x64sc",
+  "sprite_count": 1,
+  "models": [
+    "6569",
+    "8565"
+  ],
+  "screenshots": {
+    "6569_full_base": "screenshots/experimental-display/border-probe-6569-full-base.png",
+    "6569_full_irq": "screenshots/experimental-display/border-probe-6569-full-irq.png",
+    "6569_debug_base": "screenshots/experimental-display/border-probe-6569-debug-base.png",
+    "6569_debug_irq": "screenshots/experimental-display/border-probe-6569-debug-irq.png",
+    "8565_full_base": "screenshots/experimental-display/border-probe-8565-full-base.png",
+    "8565_full_irq": "screenshots/experimental-display/border-probe-8565-full-irq.png",
+    "8565_debug_base": "screenshots/experimental-display/border-probe-8565-debug-base.png",
+    "8565_debug_irq": "screenshots/experimental-display/border-probe-8565-debug-irq.png"
+  }
+}

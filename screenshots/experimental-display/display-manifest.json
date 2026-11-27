@@ -1,0 +1,260 @@
+{
+  "base_commit": "930a4ea",
+  "transport_unchanged": true,
+  "VIC_bank": "$8000-$bfff",
+  "screen": "$8400",
+  "sprites": "$8800",
+  "bitmap": "$a000",
+  "programs": {
+    "EXPERIMENT": {
+      "path": "build\\GIZMO64-DISPLAY-EXPERIMENT.PRG",
+      "sha256": "2e8676ba20e2b2609d1a493890284a44a6484732b20048a259e77f8fbf02c8aa",
+      "size_bytes": 19006,
+      "segments": {
+        "ZEROPAGE": {
+          "start": 2,
+          "end": 27,
+          "bytes": 26
+        },
+        "LOADADDR": {
+          "start": 2047,
+          "end": 2048,
+          "bytes": 2
+        },
+        "EXEHDR": {
+          "start": 2049,
+          "end": 2060,
+          "bytes": 12
+        },
+        "STARTUP": {
+          "start": 2061,
+          "end": 2111,
+          "bytes": 51
+        },
+        "CODE": {
+          "start": 2112,
+          "end": 13331,
+          "bytes": 11220
+        },
+        "RODATA": {
+          "start": 13332,
+          "end": 20892,
+          "bytes": 7561
+        },
+        "DATA": {
+          "start": 20893,
+          "end": 20986,
+          "bytes": 94
+        },
+        "INIT": {
+          "start": 20987,
+          "end": 21014,
+          "bytes": 28
+        },
+        "BSS": {
+          "start": 21015,
+          "end": 26488,
+          "bytes": 5474
+        },
+        "ONCE": {
+          "start": 21015,
+          "end": 21052,
+          "bytes": 38
+        }
+      }
+    },
+    "STANDARD": {
+      "path": "build\\GIZMO64-DISPLAY-STANDARD.PRG",
+      "sha256": "66b8050f2bbb880a9c47aed9a68047968b8874960b3025f832bc40230c6d4a5b",
+      "size_bytes": 20383,
+      "segments": {
+        "ZEROPAGE": {
+          "start": 2,
+          "end": 27,
+          "bytes": 26
+        },
+        "LOADADDR": {
+          "start": 2047,
+          "end": 2048,
+          "bytes": 2
+        },
+        "EXEHDR": {
+          "start": 2049,
+          "end": 2060,
+          "bytes": 12
+        },
+        "STARTUP": {
+          "start": 2061,
+          "end": 2111,
+          "bytes": 51
+        },
+        "CODE": {
+          "start": 2112,
+          "end": 13398,
+          "bytes": 11287
+        },
+        "RODATA": {
+          "start": 13399,
+          "end": 22269,
+          "bytes": 8871
+        },
+        "DATA": {
+          "start": 22270,
+          "end": 22363,
+          "bytes": 94
+        },
+        "INIT": {
+          "start": 22364,
+          "end": 22391,
+          "bytes": 28
+        },
+        "BSS": {
+          "start": 22392,
+          "end": 27865,
+          "bytes": 5474
+        },
+        "ONCE": {
+          "start": 22392,
+          "end": 22429,
+          "bytes": 38
+        }
+      }
+    },
+    "COMPACT": {
+      "path": "build\\GIZMO64-DISPLAY-COMPACT.PRG",
+      "sha256": "ac6468dc080f9d7fbacfc52dc7a9c1c21c732e8384ec861e6aae42a5a4065960",
+      "size_bytes": 20386,
+      "segments": {
+        "ZEROPAGE": {
+          "start": 2,
+          "end": 27,
+          "bytes": 26
+        },
+        "LOADADDR": {
+          "start": 2047,
+          "end": 2048,
+          "bytes": 2
+        },
+        "EXEHDR": {
+          "start": 2049,
+          "end": 2060,
+          "bytes": 12
+        },
+        "STARTUP": {
+          "start": 2061,
+          "end": 2111,
+          "bytes": 51
+        },
+        "CODE": {
+          "start": 2112,
+          "end": 13401,
+          "bytes": 11290
+        },
+        "RODATA": {
+          "start": 13402,
+          "end": 22272,
+          "bytes": 8871
+        },
+        "DATA": {
+          "start": 22273,
+          "end": 22366,
+          "bytes": 94
+        },
+        "INIT": {
+          "start": 22367,
+          "end": 22394,
+          "bytes": 28
+        },
+        "BSS": {
+          "start": 22395,
+          "end": 27868,
+          "bytes": 5474
+        },
+        "ONCE": {
+          "start": 22395,
+          "end": 22432,
+          "bytes": 38
+        }
+      }
+    },
+    "DENSE": {
+      "path": "build\\GIZMO64-DISPLAY-DENSE.PRG",
+      "sha256": "e3f67f89150f63230d428637160c6970ba898796baa38290b18ab52ca888d165",
+      "size_bytes": 20389,
+      "segments": {
+        "ZEROPAGE": {
+          "start": 2,
+          "end": 27,
+          "bytes": 26
+        },
+        "LOADADDR": {
+          "start": 2047,
+          "end": 2048,
+          "bytes": 2
+        },
+        "EXEHDR": {
+          "start": 2049,
+          "end": 2060,
+          "bytes": 12
+        },
+        "STARTUP": {
+          "start": 2061,
+          "end": 2111,
+          "bytes": 51
+        },
+        "CODE": {
+          "start": 2112,
+          "end": 13404,
+          "bytes": 11293
+        },
+        "RODATA": {
+          "start": 13405,
+          "end": 22275,
+          "bytes": 8871
+        },
+        "DATA": {
+          "start": 22276,
+          "end": 22369,
+          "bytes": 94
+        },
+        "INIT": {
+          "start": 22370,
+          "end": 22397,
+          "bytes": 28
+        },
+        "BSS": {
+          "start": 22398,
+          "end": 27871,
+          "bytes": 5474
+        },
+        "ONCE": {
+          "start": 22398,
+          "end": 22435,
+          "bytes": 38
+        }
+      }
+    }
+  },
+  "visible_conversation_rows": {
+    "STANDARD": 22,
+    "COMPACT": 26,
+    "DENSE": 31
+  },
+  "screenshots": {
+    "STANDARD": {
+      "path": "screenshots/experimental-display/standard.png",
+      "sha256": "2cee70aee05813039c45bce63f3a8a9298f690f82077af3a63241226b3c476ab",
+      "size": "408x293"
+    },
+    "COMPACT": {
+      "path": "screenshots/experimental-display/compact.png",
+      "sha256": "09b078791acf3a6765d903938b1c1fd165b1f1b7d46e19d6591ec784c987d145",
+      "size": "408x293"
+    },
+    "DENSE": {
+      "path": "screenshots/experimental-display/dense.png",
+      "sha256": "7d124e3dc36ed210888b46116536b5581c52d61186a7da028bba2473028c5282",
+      "size": "408x293"
+    }
+  }
+}

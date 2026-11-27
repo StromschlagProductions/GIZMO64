@@ -1,0 +1,10 @@
+{
+  "font_modes": [
+    "standard-5x7-8",
+    "compact-5x6-7",
+    "dense-5x5-6"
+  ],
+  "font_bytes": 3072,
+  "sprite_bytes": 704,
+  "sha256": "16ec1f22b501c100327da6ea2e2c2ce6911b94caa483e44edf85f8f7bcd1392f"
+}
