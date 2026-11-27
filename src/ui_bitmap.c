@@ -18,6 +18,8 @@ extern unsigned char border_sprites_enabled;
 extern unsigned char *bitmap_src,*bitmap_dst;
 extern unsigned char bitmap_count,bitmap_low;
 extern void bitmap_blit(void);
+extern unsigned char bitmap_copy_pages,bitmap_copy_remainder;
+extern void bitmap_copy_rows(void),bitmap_copy_scanline(void);
 
 static const unsigned char foreground[2]={5,3};
 static const unsigned char accent[2]={13,14};
@@ -38,6 +40,7 @@ static unsigned char prefs[8],prefs_result;
 static unsigned char waiting,sound_enabled,sound_ticks,memory_count=255;
 static unsigned char cursor_on=1,pulse,phase,previous_raster=255,last_state=255;
 static const char *editor_text="";
+static unsigned char rendered_input[74],rendered_count;
 
 static unsigned char prefs_valid(void)
 {
@@ -132,17 +135,22 @@ static void line_at(unsigned char row,const unsigned char *line)
 static void scroll_raster(unsigned char rows)
 {
     unsigned char h=heights[mode],y,x;
+    unsigned int bytes;
     unsigned char first=top(),last=first+rows*h;
     if (h==8) {
-        for (y=first;y<last-h;y+=8) {
-            memcpy((void *)(BITMAP+bitmap_rows[y>>3]),
-                   (const void *)(BITMAP+bitmap_rows[(y+8)>>3]),320);
-            link_poll();
-        }
+        bytes=(unsigned int)(rows-1)*320;
+        bitmap_src=(unsigned char *)(BITMAP+bitmap_rows[(first+8)>>3]);
+        bitmap_dst=(unsigned char *)(BITMAP+bitmap_rows[first>>3]);
+        bitmap_copy_pages=(unsigned char)(bytes>>8);
+        bitmap_copy_remainder=(unsigned char)bytes;
+        bitmap_copy_rows();
+        link_poll();
         memset((void *)(BITMAP+bitmap_rows[(last-h)>>3]),0,320);
     } else {
         for (y=first;y<last-h;++y) {
-            for (x=0;x<40;++x) *pixel_byte(x,y)=*pixel_byte(x,y+h);
+            bitmap_src=(unsigned char *)pixel_byte(0,y+h);
+            bitmap_dst=(unsigned char *)pixel_byte(0,y);
+            bitmap_copy_scanline();
             if ((y&3)==0) link_poll();
         }
         for (;y<last;++y) for (x=0;x<40;++x) *pixel_byte(x,y)=0;
@@ -162,10 +170,29 @@ static void draw_safe_logo(void)
     for (x=0;x<120;++x) SCREEN[x]=(accent[palette]<<4);
 }
 
+static void input_position(unsigned char index,unsigned char *x,unsigned char *y)
+{
+    unsigned char cell=index+5;
+    *x=cell<40 ? cell : cell-40;
+    *y=input_y()+(cell<40 ? 0 : heights[mode]);
+}
+
+static void input_glyph(unsigned char index,unsigned char c)
+{
+    unsigned char x,y;
+    input_position(index,&x,&y);
+    glyph(x,y,c);
+}
+
+static void cursor_draw(unsigned char visible)
+{
+    input_glyph(rendered_count,visible ? 96 : 32);
+}
+
 static void draw_input(void)
 {
-    unsigned char y,x,length,start,col=5,row=0;
-    unsigned char h=heights[mode],base=input_y();
+    unsigned char y,x,length,start,i;
+    unsigned char base=input_y();
     for (y=base;y<200;++y) {
         for (x=0;x<40;++x) *pixel_byte(x,y)=0;
         if ((y&3)==0) link_poll();
@@ -173,12 +200,12 @@ static void draw_input(void)
     text(0,base,"YOU: ");
     length=(unsigned char)strlen(editor_text);
     start=length>74 ? length-74 : 0;
-    for (x=start;x<length;++x) {
-        if (col==40) { col=0;row=1; }
-        glyph(col++,base+row*h,code(editor_text[x]));
+    rendered_count=length-start;
+    for (i=0;i<rendered_count;++i) {
+        rendered_input[i]=editor_text[start+i];
+        input_glyph(i,code(rendered_input[i]));
     }
-    if (col==40) { col=0;row=1; }
-    if (cursor_on) glyph(col,base+row*h,96);
+    if (cursor_on) cursor_draw(1);
 }
 
 static void draw_status(void)
@@ -421,9 +448,25 @@ void ui_key_sound(void)
 void ui_waiting(unsigned char value) {waiting=value;}
 void ui_memory_count(unsigned char value) {memory_count=value;if (service) redraw();}
 void ui_status_changed(void) {last_state=255;}
-void ui_prompt(const char *s) {editor_text=s;draw_input();}
-void ui_input_char(unsigned char c) {(void)c;draw_input();}
-void ui_input_backspace(void) {draw_input();}
+void ui_prompt(const char *s)
+{
+    unsigned char length,start,count,i,old_count=rendered_count;
+    editor_text=s;
+    length=(unsigned char)strlen(s);
+    start=length>74 ? length-74 : 0;
+    count=length-start;
+    if (cursor_on) cursor_draw(0);
+    for (i=0;i<count || i<old_count;++i) {
+        unsigned char next=i<count ? s[start+i] : 0;
+        if (i>=old_count || i>=count || rendered_input[i]!=next)
+            input_glyph(i,next ? code(next) : 32);
+        if (i<count) rendered_input[i]=next;
+    }
+    rendered_count=count;
+    if (cursor_on) cursor_draw(1);
+}
+void ui_input_char(unsigned char c) {(void)c;ui_prompt(editor_text);}
+void ui_input_backspace(void) {ui_prompt(editor_text);}
 
 void ui_tick(unsigned char active)
 {
@@ -436,7 +479,7 @@ void ui_tick(unsigned char active)
         phase=active ? (phase+1)&3 : 0;
         SCREEN[1023]=0x27+phase;
         cursor_on=!cursor_on;
-        draw_input();
+        cursor_draw(cursor_on);
     }
     if (last_state!=link_state) {last_state=link_state;if (!menu && !service) redraw();}
     (void)waiting;

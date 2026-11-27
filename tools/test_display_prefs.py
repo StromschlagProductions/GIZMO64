@@ -1,5 +1,6 @@
 """Verify device-8 settings survive a fresh C64 emulator process."""
 from pathlib import Path
+import argparse
 import subprocess
 from test_border_probe import png_rows
 
@@ -12,6 +13,7 @@ C1541 = ROOT / ".local-tools/vice/SDL2VICE-3.9-win64/c1541.exe"
 SOURCES = ["src/display_prefs_test.c", "src/ui_bitmap.c", "src/link.c",
            "src/font.s", "src/display_assets.s", "src/border_irq.s",
            "src/bitmap_blit.s"]
+TEXT_MODE = False
 
 
 def build(name: str, define: str = "", source: str = "src/display_prefs_test.c") -> Path:
@@ -19,13 +21,14 @@ def build(name: str, define: str = "", source: str = "src/display_prefs_test.c")
     command = [str(CC65), "-t", "c64", "-O", "-I", "src"]
     if define:
         command.append(f"-D{define}")
-    subprocess.run([*command, "-o", str(program), source, *SOURCES[1:]],
+    ui = "src/ui_text_experiment.c" if TEXT_MODE else "src/ui_bitmap.c"
+    subprocess.run([*command, "-o", str(program), source, ui, *SOURCES[2:]],
                    cwd=ROOT, check=True)
     return program
 
 
 def capture(name: str, program: Path) -> Path:
-    image = BUILD / f"display-prefs-{name}.png"
+    image = BUILD / f"display-prefs-{'text-' if TEXT_MODE else ''}{name}.png"
     image.unlink(missing_ok=True)
     command = [str(VICE), "-VICIImodel", "6569", "-VICIIborders", "1",
                "-8", str(DRIVE), "-autostartprgmode", "1",
@@ -38,6 +41,10 @@ def capture(name: str, program: Path) -> Path:
 
 
 def main() -> None:
+    global TEXT_MODE
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--text", action="store_true")
+    TEXT_MODE = parser.parse_args().text
     DRIVE.unlink(missing_ok=True)
     subprocess.run([str(C1541), "-format", "GIZMO,01", "d64", str(DRIVE)],
                    cwd=ROOT, check=True, capture_output=True)

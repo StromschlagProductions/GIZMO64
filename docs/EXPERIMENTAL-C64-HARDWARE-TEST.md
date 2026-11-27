@@ -1,11 +1,9 @@
 # Kompakter Hardwaretest: experimentelles C64-Display
 
-Dieser Ablauf betrifft nur `build/GIZMO64-DISPLAY-EXPERIMENT.PRG`. Das produktive `GIZMO64.PRG` bleibt der Rückfallstand. Die folgenden Prüfpunkte sind **vorbereitet, nicht als bestanden markiert**.
+Dieser Ablauf betrifft nur `build/GIZMO64-TEXT-EXPERIMENT.PRG` nach der [Hardwarekorrektur](EXPERIMENTAL-C64-HARDWARE-CORRECTION.md). Das produktive `GIZMO64.PRG` bleibt der Rückfallstand. Die folgenden Prüfpunkte sind **vorbereitet, nicht als bestanden markiert**.
 
-1. PRG auf dem Ultimate starten. Logo im oberen Rand, Wellenform, freie Trennung zum Gespräch und keine dauerhafte Hilfszeile prüfen. F6 einmal zum sicheren Logo im Bild und zurück schalten. Falls der Rand flackert oder Elemente überlagert, den sicheren Modus verwenden und den Befund notieren.
-2. `HELP` eingeben. Mit Cursor hoch/runter die inverse Auswahl bewegen; mit RETURN Grün/Eisblau, STANDARD/COMPACT/DENSE und QWERTY/QWERTZ umschalten. Y/Z und SHIFT+Y/Z in einer unkritischen Eingabe prüfen. F8 muss weiterhin den Servicemodus öffnen.
-3. Falls ein beschreibbares Laufwerk 8 vorhanden ist: `SAVE SETTINGS TO DRIVE 8` wählen, PRG vollständig neu starten und Farbe, Schriftgröße und Tastaturbelegung vergleichen. Bei fehlendem Laufwerk muss eine klare Fehlermeldung erscheinen; der Standard QWERTY muss funktionieren.
-4. Eine kurze und eine lange Antwort über die echte ACIA-Brücke empfangen. F3/F5/F7 und Eingabe während des Scrollbacks prüfen. Nach F8 `DIAG` ausführen und Verbindungsstatus sowie OV/DROP notieren. Keine Änderungen an Ultimate- oder PC-Einstellungen nötig.
-5. Bei Kommunikationsfehler, instabilem Rand oder beschädigter Darstellung zum produktiven `GIZMO64.PRG` zurückkehren. PRG-Dateien nicht überschreiben.
+1. PRG auf dem Ultimate starten und eine normale Frage eingeben. `YOU:` und der bereits getippte Text müssen stabil bleiben; bei der Antwort darf kein zeilenweiser Neuaufbau des gesamten Bildes sichtbar sein. Das Randlogo und seine gelegentliche Bewegung kurz beobachten.
+2. Commodore-Taste einmal drücken, halten und loslassen: Das Menü soll **einmal** öffnen. Mit Cursor hoch/runter und RETURN einen Wert wechseln. `HELP` als alternative Öffnung prüfen; F8 muss den Servicemodus öffnen. F6 kann bei Randproblemen das sichere Logo im Bild zeigen.
+3. Eine längere Antwort empfangen, F3/F5/F7 kurz prüfen und im F8-Servicemodus `DIAG` ausführen. OV/DROP und den wahrgenommenen Antwortaufbau notieren. Bei einer Störung zum produktiven `GIZMO64.PRG` zurückkehren; keine Einstellungen am Ultimate oder PC ändern.
 
-**Noch offen:** alle obigen Punkte auf echter Ultimate-Hardware, insbesondere Randtiming, lange Antworten, Scrollgefühl und Kommunikation unter Last. VICE emuliert die Ultimate-ACIA hier nicht.
+**Noch offen:** alle obigen Punkte auf echter Ultimate-Hardware, insbesondere C=-Erkennung, Cursorstabilität, Randtiming und Kommunikation unter Last. VICE emuliert die Ultimate-ACIA hier nicht.

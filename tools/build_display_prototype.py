@@ -16,19 +16,24 @@ CC65 = ROOT / ".local-tools/cc65/bin/cl65.exe"
 VICE = ROOT / ".local-tools/vice/SDL2VICE-3.9-win64/x64sc.exe"
 SOURCES = ["src/main_bitmap.c", "src/ui_bitmap.c", "src/link.c",
            "src/font.s", "src/display_assets.s", "src/border_irq.s",
-           "src/bitmap_blit.s"]
+           "src/bitmap_blit.s", "src/keyboard_matrix.s"]
+TEXT_SOURCES = ["src/main_bitmap.c", "src/ui_text_experiment.c", "src/link.c",
+                "src/font.s", "src/display_assets.s", "src/border_irq.s",
+                "src/bitmap_blit.s", "src/keyboard_matrix.s"]
 
 
 def run(*args: str, cwd: Path = ROOT) -> subprocess.CompletedProcess[str]:
     return subprocess.run(args, cwd=cwd, check=True, text=True, capture_output=True)
 
 
-def build(name: str, defines: tuple[str, ...] = ()) -> tuple[Path, dict]:
-    program = BUILD / f"GIZMO64-DISPLAY-{name}.PRG"
-    listing = BUILD / f"GIZMO64-DISPLAY-{name}.map"
+def build(name: str, defines: tuple[str, ...] = (),
+          sources: list[str] = SOURCES, bss_limit: int = 0x8000) -> tuple[Path, dict]:
+    stem = f"GIZMO64-{name}" if name.startswith("TEXT-") else f"GIZMO64-DISPLAY-{name}"
+    program = BUILD / f"{stem}.PRG"
+    listing = BUILD / f"{stem}.map"
     args = [str(CC65), "-t", "c64", "-O", "-I", "src"]
     args += [f"-D{define}" for define in defines]
-    args += ["-Wl", f"-m,{listing}", "-o", str(program), *SOURCES]
+    args += ["-Wl", f"-m,{listing}", "-o", str(program), *sources]
     run(*args)
     segments = {}
     segment_section = listing.read_text().split("Segment list:", 1)[1].split("Exports list", 1)[0]
@@ -38,8 +43,8 @@ def build(name: str, defines: tuple[str, ...] = ()) -> tuple[Path, dict]:
             segments[match[1]] = {"start": int(match[2], 16),
                                   "end": int(match[3], 16),
                                   "bytes": int(match[4], 16)}
-    if not segments or segments["BSS"]["end"] >= 0x8000:
-        raise RuntimeError("Program/BSS could overlap VIC bank 2")
+    if not segments or segments["BSS"]["end"] >= bss_limit:
+        raise RuntimeError(f"Program/BSS could overlap VIC data at ${bss_limit:04x}")
     if program.read_bytes()[:2] != b"\x01\x08":
         raise RuntimeError("Invalid C64 PRG load address")
     return program, segments
@@ -102,6 +107,15 @@ def main() -> None:
             image = capture(program, name.lower())
             manifest["screenshots"][name] = {"path": str(image.relative_to(ROOT)),
                                               "sha256": sha(image), "size": "408x293"}
+        print(name, program.stat().st_size, segments["BSS"]["end"])
+    for name, defines in {"TEXT-EXPERIMENT": (),
+                          "TEXT-DEMO": ("GIZMO_DEMO",),
+                          "TEXT-COMPACT": ("GIZMO_DEMO", "GIZMO_DEMO_COMPACT"),
+                          "TEXT-DENSE": ("GIZMO_DEMO", "GIZMO_DEMO_DENSE")}.items():
+        program, segments = build(name, defines, TEXT_SOURCES, 0x8000)
+        manifest["programs"][name] = {"path": str(program.relative_to(ROOT)),
+                                       "sha256": sha(program), "size_bytes": program.stat().st_size,
+                                       "segments": segments}
         print(name, program.stat().st_size, segments["BSS"]["end"])
     path = BUILD / "display-manifest.json"
     path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")

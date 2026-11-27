@@ -6,6 +6,8 @@
 
 static char input[121];
 static unsigned char input_length;
+static unsigned char commodore_held;
+extern unsigned char commodore_pressed(void);
 
 static void service_command(void)
 {
@@ -53,6 +55,14 @@ static void execute(void)
 static void keyboard(void)
 {
     unsigned char c;
+    unsigned char down=commodore_pressed() ||
+        ((*(volatile unsigned char *)0x028d & 0x02)!=0);
+    if (down && !commodore_held) {
+        commodore_held=1;
+        ui_help_toggle();
+        return;
+    }
+    if (!down) commodore_held=0;
     if (!kbhit()) return;
     c = cgetc();
     if (c == 0x85) { ui_theme(); return; }       /* F1 */
@@ -67,9 +77,7 @@ static void keyboard(void)
         ui_prompt(input);
         return;
     }
-    if ((c == 0xc8 || c == 'H') && (*(volatile unsigned char *)0x028d & 0x02)) {
-        ui_help_toggle();return;
-    }
+    if (down && (c == 0xc8 || c == 'H')) return;
     if (ui_menu_active()) {
         if (c==0x91) ui_menu_move(-1);
         else if (c==0x11) ui_menu_move(1);
