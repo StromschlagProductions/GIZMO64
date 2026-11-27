@@ -580,7 +580,7 @@ def run_benchmark(lab, questions, variants, destination):
     return json_path, md_path
 
 
-def run_gui(screenshot=None, qa_report=None):
+def run_gui(screenshot=None, qa_report=None, config_qa_report=None):
     """Qt presentation layer. LAB remains the sole owner of model and memory work."""
     diagnostic=os.environ.get('GIZMO_GUI_LOG',os.devnull)
     if sys.stdout is None:sys.stdout=open(diagnostic,'a',encoding='utf-8')
@@ -642,6 +642,7 @@ def run_gui(screenshot=None, qa_report=None):
     class Window(QMainWindow):
         def __init__(self):
             super().__init__(); self.lab=None; self.busy=False; self.closing=False
+            self.saved_config=load_config(private_dir())
             self.last_error=None
             self.pending_prompts=[]
             self.archive_page=0;self.archive_data_version=None
@@ -898,14 +899,14 @@ def run_gui(screenshot=None, qa_report=None):
             self.focus_prompt()
             QTimer.singleShot(0,self.focus_prompt)
         def open_settings(self):
-            if self.lab:
-                for key,field in self.settings_fields.items():
-                    value=self.lab.config.get(key)
-                    number=-1 if key=='seed' and value is None else (value or 0)
-                    field.setValue(int(number) if isinstance(field,QSpinBox) else float(number))
-                self.uplink_enabled.setChecked(bool(self.lab.config.get('uplink_enabled',False)))
-                self.uplink_host.setText(str(self.lab.config.get('uplink_host','auto')))
-                self.uplink_port.setValue(int(self.lab.config.get('uplink_port',6464)))
+            config=self.lab.config if self.lab else self.saved_config
+            for key,field in self.settings_fields.items():
+                value=config.get(key)
+                number=-1 if key=='seed' and value is None else (value or 0)
+                field.setValue(int(number) if isinstance(field,QSpinBox) else float(number))
+            self.uplink_enabled.setChecked(bool(config.get('uplink_enabled',False)))
+            self.uplink_host.setText(str(config.get('uplink_host','auto')))
+            self.uplink_port.setValue(int(config.get('uplink_port',6464)))
             self.show_profile()
             self.pages.setCurrentIndex(2)
         def show_profile(self):
@@ -917,22 +918,22 @@ def run_gui(screenshot=None, qa_report=None):
             self.profile_path.setText('ACTIVE PROFILE // '+path.name+'\n'+str(path))
             self.profile_warning.setText('WARNING // '+self.lab.personality_warning if self.lab.personality_warning else '')
         def select_profile(self):
+            if not self.lab:
+                QMessageBox.information(self,'GIZMO','Start the core before selecting a personality file.');return
             filename,_=QFileDialog.getOpenFileName(self,'Select local personality profile','','Text files (*.txt);;All files (*)')
             if filename:self.selected_profile=filename;self.profile_path.setText('Selected: '+Path(filename).name)
         def save_settings(self):
-            if not self.lab:
-                QMessageBox.information(self,'GIZMO','Start the core before changing settings.');return
             if self.busy:return
-            config=dict(self.lab.config)
+            config=dict(self.lab.config if self.lab else self.saved_config)
             for key,field in self.settings_fields.items():config[key]=None if key=='seed' and field.value()==-1 else field.value()
             config['uplink_enabled']=self.uplink_enabled.isChecked()
             config['uplink_host']=self.uplink_host.text().strip() or 'auto'
             config['uplink_port']=self.uplink_port.value()
-            if config['uplink_enabled']:
+            if config['uplink_enabled'] and config['uplink_host']!='auto':
                 try:uplink_bind_host(config['uplink_host'])
                 except (OSError,ValueError,RuntimeError) as error:
                     QMessageBox.warning(self,'Uplink configuration',str(error));return
-            if getattr(self,'selected_profile',None):
+            if self.lab and getattr(self,'selected_profile',None):
                 if QMessageBox.question(self,'Confirm profile change','Replace the active local personality profile with the selected file?')!=QMessageBox.Yes:return
                 source=Path(self.selected_profile);content=source.read_text(encoding='utf-8')
                 target=self.lab.personality_path
@@ -948,15 +949,24 @@ def run_gui(screenshot=None, qa_report=None):
                 self.lab.profile_sha256=hashlib.sha256(self.lab.personality.encode()).hexdigest()
                 self.selected_profile=None
                 self.show_profile()
-            self.persist_config(config)
-            prior=self.lab.uplink.status() if self.lab.uplink else None
-            self.lab.config=config
-            if not config['uplink_enabled']:self.lab.stop_uplink()
-            elif not prior or prior['host']!=uplink_bind_host(config['uplink_host']) or prior['port']!=config['uplink_port'] or prior['state']=='error':
-                self.lab.stop_uplink();self.lab.start_uplink()
+            try:self.persist_config(config)
+            except OSError as error:
+                QMessageBox.warning(self,'Settings could not be saved',str(error));return
+            self.saved_config=config
+            if self.lab:
+                prior=self.lab.uplink.status() if self.lab.uplink else None
+                self.lab.config=config
+                if not config['uplink_enabled']:self.lab.stop_uplink()
+                else:
+                    try:bind_host=uplink_bind_host(config['uplink_host'])
+                    except (OSError,ValueError,RuntimeError):bind_host=None
+                    if not prior or prior['host']!=bind_host or prior['port']!=config['uplink_port'] or prior['state']=='error':
+                        self.lab.stop_uplink();self.lab.start_uplink()
             self.log_line('SETTINGS SAVED LOCALLY');self.refresh_status()
         def persist_config(self,config):
-            config_path=self.lab.data/'config.json';temp=config_path.with_suffix('.tmp')
+            data=self.lab.data if self.lab else private_dir()
+            data.mkdir(parents=True,exist_ok=True)
+            config_path=data/'config.json';temp=config_path.with_suffix('.tmp')
             temp.write_text(json.dumps(config,indent=2,ensure_ascii=False),encoding='utf-8');os.replace(temp,config_path)
         def open_archive(self):self.pages.setCurrentIndex(3);self.archive_data_version=None;self.refresh_archive()
         def reset_archive_page(self,*_args):
@@ -1144,6 +1154,7 @@ def run_gui(screenshot=None, qa_report=None):
         def shutdown(self):
             if self.closing:return
             self.shutdown_requested.set()
+            self.close_after_shutdown=True
             self.closing=True;self.log_line('STUDIO-SAFE SHUTDOWN REQUESTED');self.activity.setText('SHUTTING DOWN')
             stopped={'value':False}
             def terminate():
@@ -1156,7 +1167,6 @@ def run_gui(screenshot=None, qa_report=None):
                 if getattr(self,'log_shutdown_error',None):self.log_line('SHUTDOWN ERROR // '+self.log_shutdown_error)
                 if not self.close_after_shutdown and not (self.thread and self.thread.is_alive()):self.shutdown_requested.clear()
                 if self.close_after_shutdown and not (self.thread and self.thread.is_alive()):QTimer.singleShot(0,self.close)
-            self.close_after_shutdown=getattr(self,'close_after_shutdown',False)
             def stop_async():
                 try:terminate()
                 except Exception as error:self.log_shutdown_error=str(error)
@@ -1172,12 +1182,46 @@ def run_gui(screenshot=None, qa_report=None):
 
     app=QApplication(sys.argv);app.setApplicationName('GIZMO Control Center')
     window=Window();window.show()
-    if qa_report:
+    if config_qa_report:
+        report={'checks':{},'error':None}
+        expected={'temperature':0.42,'top_p':0.83,'top_k':37,'min_p':0.12,
+                  'repeat_penalty':1.23,'num_ctx':6144,'num_predict':321,'seed':12345,
+                  'uplink_enabled':True,'uplink_host':'127.0.0.1','uplink_port':6464}
+        phase=os.environ.get('GIZMO_CONFIG_QA_PHASE','save')
+        def finish_config_qa():
+            report['checks']['window_closed']=not window.isVisible()
+            Path(config_qa_report).write_text(json.dumps(report,indent=2),encoding='utf-8')
+        app.aboutToQuit.connect(finish_config_qa)
+        def config_qa():
+            try:
+                window.open_settings()
+                if phase=='save':
+                    for key,value in expected.items():
+                        if key in window.settings_fields:window.settings_fields[key].setValue(value)
+                    window.uplink_enabled.setChecked(True)
+                    window.uplink_host.setText(expected['uplink_host'])
+                    window.uplink_port.setValue(expected['uplink_port'])
+                    window.save_settings()
+                actual=load_config(private_dir())
+                for key,value in expected.items():
+                    report['checks'][key]=actual.get(key)==value
+                report['checks']['settings_visible']=window.uplink_enabled.isChecked() and window.uplink_host.text()==expected['uplink_host']
+                report['checks']['unknown_setting_preserved']=actual.get('synthetic_extra')=='keep-me'
+                report['checks']['model_preserved']=actual.get('model')=='synthetic-model'
+                report['checks']['profile_preserved']=(private_dir()/'GIZMO_Awakening_V2_EN.txt').read_bytes()==b'Synthetic QA profile'
+            except Exception as error:report['error']=repr(error)
+            window.shutdown()
+        QTimer.singleShot(250,config_qa)
+    elif qa_report:
         report={'started_at':utc_now(),'checks':{},'error':None,'stream_chunks':0}
-        state={'phase':'start','at':time.monotonic(),'first_answer':None,'busy_ticks':0}
+        state={'phase':'start','at':time.monotonic(),'first_answer':None,'busy_ticks':0,'finished':False}
         progress=Path(qa_report).with_suffix('.progress.json')
         progress.parent.mkdir(parents=True,exist_ok=True)
         def finish_qa():
+            if state['finished']:return
+            state['finished']=True
+            if state['phase']!='shutdown' and report['error'] is None:
+                report['error']='GUI exited before QA completed'
             report['ended_at']=utc_now()
             report['checks']['ollama_stopped']=not any('ollama' in line.lower() for line in subprocess.run(
                 ['tasklist','/FO','CSV','/NH'],capture_output=True,text=True,timeout=10).stdout.splitlines())
@@ -1190,6 +1234,7 @@ def run_gui(screenshot=None, qa_report=None):
             path=Path(qa_report);path.parent.mkdir(parents=True,exist_ok=True)
             path.write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
             app.exit(0 if report['error'] is None and all(report['checks'].values()) else 1)
+        app.aboutToQuit.connect(finish_qa)
         def tick_body():
             phase=state['phase']
             progress.write_text(json.dumps({'phase':phase,'busy':window.busy,'core':bool(window.lab),'checks':report['checks']},ensure_ascii=False),encoding='utf-8')
@@ -1325,13 +1370,14 @@ def main():
     parser.add_argument('--gui',action='store_true',help='Grafisches Control Center')
     parser.add_argument('--screenshot',type=Path,help=argparse.SUPPRESS)
     parser.add_argument('--gui-qa-report',type=Path,help=argparse.SUPPRESS)
+    parser.add_argument('--gui-config-qa-report',type=Path,help=argparse.SUPPRESS)
     parser.add_argument('--benchmark', action='store_true')
     parser.add_argument('--variants', type=Path, help='JSON-Datei mit Modell- und Parametersätzen')
     parser.add_argument('--personality', type=Path, help='UTF-8-Profil, für alle Varianten identisch')
     parser.add_argument('--debug', action='store_true', help='Gesendete Nachrichten und Erinnerungsabruf anzeigen')
     args = parser.parse_args()
     if args.gui:
-        return run_gui(args.screenshot,args.gui_qa_report)
+        return run_gui(args.screenshot,args.gui_qa_report,args.gui_config_qa_report)
     lab = Lab(personality_file=args.personality)
     if lab.personality_warning:
         print('[!] '+lab.personality_warning,flush=True)
