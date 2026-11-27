@@ -29,12 +29,12 @@ class Capture:
         return urllib.request.urlopen(request,timeout=timeout)
 
 
-def synthetic_lab(path,opener):
+def synthetic_lab(path,opener,model_name='gemma4:12b'):
     path.mkdir(parents=True,exist_ok=True)
     shutil.copyfile(ROOT/'qa_personality.en.txt',path/'GIZMO_Awakening_V2_EN.txt')
     config=json.loads((ROOT/'config.example.json').read_text(encoding='utf-8'))
     config.update(story_enabled=True,uplink_enabled=False,num_ctx=8192,num_predict=256,
-                  model='gemma4:12b',think=False)
+                  model=model_name,think=False)
     return Lab(data=path,config=config,opener=opener)
 
 
@@ -64,13 +64,13 @@ def no_secret_in_dialog(story,payloads):
                         assert fact.casefold() not in visible, 'Hidden campaign fact reached dialogue model'
 
 
-def run(root):
+def run(root,model_name='gemma4:12b'):
     root=Path(root)
     if root.resolve().is_relative_to((Path.home()/'AppData/Local/GizmoLab').resolve()):
         raise RuntimeError('Refusing productive data directory')
     root.mkdir(parents=True,exist_ok=True)
-    capture=Capture(); lab=synthetic_lab(root/'primary',capture)
-    report={'model':'gemma4:12b','synthetic_only':True,'checks':{},'durations_s':{}}
+    capture=Capture(); lab=synthetic_lab(root/'primary',capture,model_name)
+    report={'model':model_name,'synthetic_only':True,'checks':{},'durations_s':{}}
     report['vram_total_used_mib']={'before':vram_mib()}
     started=time.perf_counter()
     try:
@@ -122,7 +122,7 @@ def run(root):
         report['timing_breakdown_s']['first_action']=first['story_metrics']
         report['vram_total_used_mib']['during_story']=vram_mib()
 
-        branch=synthetic_lab(copy_path,capture)
+        branch=synthetic_lab(copy_path,capture,model_name)
         try:
             second=branch.chat('I speak with the person here instead of examining anything.',origin='c64')
             assert second['abort_reason']=='completed'
@@ -163,7 +163,7 @@ def run(root):
         campaign_before=lab.story.db.execute('SELECT secret_json FROM campaign LIMIT 1').fetchone()[0]
         campaign_hash=hashlib.sha256(campaign_before.encode()).hexdigest()
         lab.stop()
-        lab=synthetic_lab(root/'primary',capture)
+        lab=synthetic_lab(root/'primary',capture,model_name)
         lab.start()
         if lab.analyzer:lab.analyzer.stop();lab.analyzer=None
         assert hashlib.sha256(lab.story.world()['secret_json'].encode()).hexdigest()==truth_hash
@@ -196,9 +196,10 @@ def run(root):
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--report',type=Path)
+    parser.add_argument('--model',choices=('gemma4:12b','gemma4:e2b'),default='gemma4:12b')
     args=parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='gizmo-story-qa-',ignore_cleanup_errors=True) as temporary:
-        report=run(Path(temporary))
+        report=run(Path(temporary),model_name=args.model)
         if args.report:
             args.report.parent.mkdir(parents=True,exist_ok=True)
             args.report.write_text(json.dumps(report,indent=2)+'\n',encoding='utf-8')
