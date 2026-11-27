@@ -37,12 +37,10 @@ class FakeModel:
             if self.invalid:
                 return io.BytesIO(b'{"message":{"content":"not json"}}')
             event=json.loads(prompt.split(' Repair invalid output')[0])
-            state=event['public_state']
-            state['room']['examined']=True
             output={'event_id':event['event_id'],'expected_version':event['expected_version'],
                     'public_scene':'SYNTHETIC_CANON_TOKEN' if self.leak else 'A fictional object can now be examined.',
                     'consequence':'The room is marked examined.',
-                    'public_state':state,'referenced_ids':['room'],'complete':False}
+                    'state_patch':{'room':{'examined':True}},'referenced_ids':['room'],'complete':False}
         return io.BytesIO(json.dumps({'message':{'content':json.dumps(output)},'done':True}).encode())
 
 
@@ -133,6 +131,82 @@ class StoryTest(unittest.TestCase):
                 lab.story.commit(decision,'A fictional consequence.')
                 with self.assertRaises(RuntimeError):lab.story.commit(decision,'A duplicate consequence.')
                 self.assertEqual(lab.story.db.execute('SELECT COUNT(*) FROM events').fetchone()[0],1)
+            finally:
+                lab.story.close();lab.memory.close()
+
+    def test_dialogue_uses_public_state_without_director_and_survives_restart(self):
+        with tempfile.TemporaryDirectory() as folder:
+            model=FakeModel();lab=self.setup_lab(folder,model)
+            try:
+                lab.chat('/story')
+                before=len(model.payloads)
+                result=lab.chat('What can you tell me about this room?')
+                self.assertEqual(result['abort_reason'],'completed')
+                self.assertEqual(result['story_metrics']['route'],'dialogue')
+                self.assertEqual(len(model.payloads),before+1)
+                self.assertFalse(model.payloads[-1].get('format'))
+                self.assertEqual(lab.story.world()['turn'],0)
+                self.assertEqual(lab.story.db.execute('SELECT COUNT(*) FROM dialogue').fetchone()[0],1)
+                self.assertFalse(lab.memory.db.execute('SELECT 1 FROM messages LIMIT 1').fetchone())
+                lab.story.close();lab.memory.close()
+                lab=self.setup_lab(folder,model)
+                self.assertIn('What can you tell me about this room?',
+                              [message['content'] for message in lab.story.dialogue_history(lab.story.world()['id'])])
+            finally:
+                lab.story.close();lab.memory.close()
+
+    def test_route_covers_question_action_and_ambiguous_conversation(self):
+        route=StoryDirector.intent
+        self.assertEqual(route('How is your day?',True),'dialogue')
+        self.assertEqual(route('What did we already notice?',True),'dialogue')
+        self.assertEqual(route('I carefully examine the door.',True),'action')
+        self.assertEqual(route('Open the door.',True),'action')
+        self.assertEqual(route('Could you open the door?',True),'action')
+        self.assertEqual(route('Can you tell me what we know?',True),'dialogue')
+        self.assertEqual(route('I wonder what the door means.',True),'dialogue')
+        self.assertEqual(route('Open the door.',False),'normal')
+
+    def test_dialogue_spoiler_is_buffered(self):
+        with tempfile.TemporaryDirectory() as folder:
+            model=FakeModel();lab=self.setup_lab(folder,model)
+            try:
+                lab.chat('/story')
+                model.dialogue_leak=True
+                visible=[]
+                result=lab.chat('What do you notice?',on_text=visible.append)
+                self.assertEqual(result['abort_reason'],'story_validation_failed')
+                self.assertEqual(visible,['The fictional reply could not be safely shown.'])
+                self.assertEqual(lab.story.db.execute('SELECT COUNT(*) FROM dialogue').fetchone()[0],0)
+            finally:
+                lab.story.close();lab.memory.close()
+
+    def test_story_schema_upgrade_backups_existing_world(self):
+        with tempfile.TemporaryDirectory() as folder:
+            model=FakeModel();lab=self.setup_lab(folder,model)
+            try:
+                lab.chat('/story')
+                world_id=lab.story.world()['id']
+                lab.story.db.execute('DROP TABLE dialogue')
+                lab.story.db.execute('PRAGMA user_version=1')
+                lab.story.db.commit()
+                lab.story.close();lab.memory.close()
+                lab=self.setup_lab(folder,model)
+                self.assertEqual(lab.story.world()['id'],world_id)
+                self.assertEqual(lab.story.db.execute('PRAGMA user_version').fetchone()[0],2)
+                self.assertTrue((Path(folder)/'story.sqlite3.before-v2.bak').is_file())
+            finally:
+                lab.story.close();lab.memory.close()
+
+    def test_large_profile_uses_configured_context_without_truncation(self):
+        with tempfile.TemporaryDirectory() as folder:
+            model=FakeModel();lab=self.setup_lab(folder,model)
+            try:
+                lab.personality='Synthetic profile sentence. '*150
+                result=lab.chat('/story')
+                self.assertEqual(result['abort_reason'],'completed')
+                dialogue=model.payloads[-1]
+                self.assertEqual(dialogue['options']['num_ctx'],8192)
+                self.assertEqual(dialogue['messages'][0]['content'],lab.personality)
             finally:
                 lab.story.close();lab.memory.close()
 

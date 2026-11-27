@@ -94,6 +94,19 @@ def run(root):
         report['checks']['fiction_not_in_real_memory']=True
         report['durations_s']['first_adventure']=round(opened['total_s'],2)
 
+        before_dialogue=len(capture.payloads)
+        visible=[]
+        talk_in_story=lab.chat('What have we noticed so far?',origin='gui',on_text=visible.append)
+        assert talk_in_story['abort_reason']=='completed'
+        assert len(capture.payloads)==before_dialogue+1, 'Simple story question called Director'
+        assert lab.story.world()['turn']==0 and visible
+        no_secret_in_dialog(lab.story,capture.payloads)
+        report['checks']['story_question_without_director']=True
+        report['checks']['story_question_streamed_safely']=True
+        report['durations_s']['story_question']=round(talk_in_story['total_s'],2)
+        report['durations_s']['story_question_first_text']=round(talk_in_story['first_text_s'],2)
+        report['timing_breakdown_s']={'story_question':talk_in_story['story_metrics']}
+
         copy_path=root/'branch';copy_path.mkdir()
         destination=sqlite3.connect(copy_path/'story.sqlite3')
         try:lab.story.db.backup(destination)
@@ -106,6 +119,7 @@ def run(root):
         assert lab.story.world()['secret_json']==first_truth
         no_secret_in_dialog(lab.story,capture.payloads)
         report['durations_s']['first_action']=round(first['total_s'],2)
+        report['timing_breakdown_s']['first_action']=first['story_metrics']
         report['vram_total_used_mib']['during_story']=vram_mib()
 
         branch=synthetic_lab(copy_path,capture)
@@ -116,6 +130,7 @@ def run(root):
             assert branch.story.world()['public_state_json']!=first_state, 'Two choices produced the same world state'
             no_secret_in_dialog(branch.story,capture.payloads)
             report['durations_s']['alternate_action']=round(second['total_s'],2)
+            report['timing_breakdown_s']['alternate_action']=second['story_metrics']
             report['checks']['different_actions_different_state']=True
         finally:branch.story.close();branch.memory.close()
 

@@ -4,6 +4,7 @@ import hashlib
 import ipaddress
 import json
 import os
+import re
 import signal
 import socket
 import subprocess
@@ -389,16 +390,19 @@ class Lab:
                 if context is None and self.story:
                     active=self.story.status()['status']=='active'
                     intent=self.story.intent(prompt,active)
-                    if intent=='talk':
-                        self.story.pause()
-                        return self._chat(prompt,context,on_text,model,origin)
                     if intent!='normal':
-                        return self._story_chat(prompt,intent,on_text,model,origin)
+                        if self.analyzer:self.analyzer.pause()
+                        try:return self._story_chat(prompt,intent,on_text,model,origin)
+                        finally:
+                            if self.analyzer and not self.stop_event.is_set():self.analyzer.resume()
                 return self._chat(prompt,context,on_text,model,origin)
             finally:self.chat_done.set()
 
     def _story_chat(self,prompt,intent,on_text,model,origin):
         started=time.perf_counter()
+        director_s=0.0
+        context_s=0.0
+        validation_s=0.0
         def simple(answer,abort='completed'):
             if on_text:on_text(answer)
             elapsed=time.perf_counter()-started
@@ -414,24 +418,78 @@ class Lab:
             return simple('The fictional adventure has ended. We can talk normally.')
         if intent=='origin' and self.story.status()['status'] in ('active','paused'):
             return simple('Pause or finish the current adventure before beginning the Origin Mystery.')
+        if intent=='dialogue':
+            context_started=time.perf_counter()
+            brief=self.story.public_brief()
+            world_id=brief['world_id']
+            history=self.story.dialogue_history(world_id)
+            context_s=time.perf_counter()-context_started
+            dialogue_prompt=('We are in an explicitly fictional adventure. Answer the user naturally and briefly '
+                             '(usually one or two sentences). Use only released observations and established '
+                             'public state. If a detail is unknown, say so. Do not invent world changes, secret '
+                             'causes, new clues or future outcomes. Do not treat fiction as real biography. '
+                             'Public context: '+json.dumps(brief,ensure_ascii=False)+'\nUser: '+prompt)
+            pending='';released='';visible_started=None
+            def safe_stream(chunk):
+                nonlocal pending,released,visible_started
+                pending+=chunk
+                # Release complete sentences only after checking their full text.
+                # A partial sentence may contain the start of a protected phrase.
+                match=list(re.finditer(r'(?<=[.!?])\s+',pending))
+                if match:
+                    end=match[-1].end()
+                    safe=pending[:end]
+                    self.story.validate_reply(released+safe,world_id)
+                    if on_text:
+                        if visible_started is None:visible_started=time.perf_counter()-started
+                        on_text(safe)
+                    released+=safe
+                    pending=pending[end:]
+            result=self._chat(dialogue_prompt,context=history,on_text=safe_stream if on_text else None,
+                              model=model,origin=origin,response_tokens=160,context_window=6144)
+            if result['abort_reason']!='completed' or not result['answer'].strip():
+                return simple('The fictional reply could not be completed.','story_generation_failed')
+            checked=time.perf_counter()
+            try:self.story.validate_reply(result['answer'],world_id)
+            except ValueError:
+                return simple('The fictional reply could not be safely shown.','story_validation_failed')
+            validation_s=time.perf_counter()-checked
+            self.story.save_dialogue(world_id,brief['turn'],prompt,result['answer'])
+            if on_text and pending:
+                if visible_started is None:visible_started=time.perf_counter()-started
+                on_text(pending)
+            result.update(first_text_s=visible_started if on_text else time.perf_counter()-started,
+                          total_s=time.perf_counter()-started,memory_retrieval_s=0,memory_extraction_s=0,
+                          story_metrics={'route':'dialogue','director_s':0,
+                                         'context_s':context_s+result['context_assembly_s'],
+                                         'dialogue_model_s':result['total_s'],'validation_s':validation_s,
+                                         'dialogue_ollama':result['ollama_metrics']})
+            return result
         if intent in ('start','origin'):
             mode='connected' if intent=='origin' else 'standalone'
             style=prompt.split(' ',1)[1].strip()[:120] if prompt.startswith(('/story ','/origin ')) else 'open'
+            director_started=time.perf_counter()
             opening=self.story.begin(style=style,mode=mode)
+            director_s=time.perf_counter()-director_started
             if not opening['new']:
                 return simple('We can continue the fictional adventure where we left off.')
             scene=opening['scene'];decision=None
         else:
+            director_started=time.perf_counter()
             decision=self.story.plan(prompt)
+            director_s=time.perf_counter()-director_started
             scene=decision['scene']+'\nConsequence: '+decision['consequence']
-        dialogue_prompt=('We are in an explicitly fictional adventure. Speak as GIZMO, in your usual '
+        dialogue_prompt=('We are in an explicitly fictional adventure. Reply briefly, usually 1–3 sentences. Speak as GIZMO, in your usual '
                          'personality, using only the following released observations. Do not assert '
                          'fiction as the user\'s real biography. Do not invent secret causes, unseen '
                          'events or future outcomes. Present the situation naturally and leave a free '
-                         'choice. No menu is required.\nReleased observations:\n'+scene)
+                         'choice. No menu is required.\nUser action: '+prompt+'\nReleased observations:\n'+scene)
         world_id=opening['world_id'] if decision is None else decision['world_id']
+        context_started=time.perf_counter()
         history=self.story.dialogue_history(world_id)
-        try:result=self._chat(dialogue_prompt,context=history,on_text=None,model=model,origin=origin)
+        context_s=time.perf_counter()-context_started
+        try:result=self._chat(dialogue_prompt,context=history,on_text=None,model=model,origin=origin,
+                              response_tokens=192,context_window=6144)
         except Exception:
             if decision is None:self.story.discard_unseen(opening['world_id'])
             raise
@@ -439,36 +497,56 @@ class Lab:
             if decision is None:self.story.discard_unseen(opening['world_id'])
             return simple('The fictional scene could not be completed. No story progress was saved.','story_generation_failed')
         answer=result['answer']
+        checked=time.perf_counter()
         try:
             self.story.validate_reply(answer,world_id)
         except ValueError:
             if decision is None:self.story.discard_unseen(opening['world_id'])
             return simple('The fictional scene could not be safely shown. No story progress was saved.','story_validation_failed')
+        validation_s=time.perf_counter()-checked
         if decision is None:self.story.commit_opening(opening['world_id'],answer)
         else:self.story.commit(decision,answer)
         if on_text:on_text(answer)
         elapsed=time.perf_counter()-started
+        dialogue_model_s=result['total_s']
         result['answer']=answer
         result['first_text_s']=elapsed
         result['total_s']=elapsed
         result['memory_retrieval_s']=0
         result['memory_extraction_s']=0
+        result['story_metrics']={'route':intent,'director_s':director_s,
+                                 'context_s':context_s+result['context_assembly_s'],
+                                 'dialogue_model_s':dialogue_model_s,
+                                 'validation_s':validation_s,'director_model':dict(self.story.last_metrics),
+                                 'dialogue_ollama':result['ollama_metrics']}
         return result
 
-    def _chat(self, prompt, context=None, on_text=None, model=None, origin='terminal'):
+    def _chat(self, prompt, context=None, on_text=None, model=None, origin='terminal',
+              response_tokens=None,context_window=None):
         if self.analyzer:
             self.analyzer.pause()
         model = model or self.model or self.config.get('model', DEFAULT_MODEL)
         elapsed_since_previous = (datetime.fromisoformat(utc_now()) - datetime.fromisoformat(self.previous_message_at)).total_seconds() if self.previous_message_at else None
         clock = f"Aktuelle UTC-Zeit: {utc_now()}. Sitzungsbeginn: {self.session_started}. Letzte Nachricht vor Sitzungsbeginn: {self.previous_message_at or 'keine'}. Vergangene Sekunden seitdem: {elapsed_since_previous if elapsed_since_previous is not None else 'unbekannt'}. Behaupte keine Aktivitaeten waehrend ausgeschalteter Sitzungen."
+        context_started=time.perf_counter()
         try:
             history=self.memory.dialog_history(self.conversation_id) if context is None else list(context)
             retrieve=self.memory.retrieve if context is None else lambda *_:([],0)
-            messages,retrieved,budget=assemble_context(self.personality,clock,prompt,history,retrieve,self.config)
+            budget_config=self.config if context_window is None else {**self.config,'num_ctx':context_window}
+            try:
+                messages,retrieved,budget=assemble_context(self.personality,clock,prompt,history,retrieve,budget_config)
+            except ContextBudgetError:
+                if context_window is None or int(self.config.get('num_ctx') or 8192)<=context_window:
+                    raise
+                # Keep the full personal profile if the shared fast runner is
+                # too small. The configured window remains the safe fallback.
+                context_window=None
+                messages,retrieved,budget=assemble_context(self.personality,clock,prompt,history,retrieve,self.config)
         except Exception:
             if self.analyzer: self.analyzer.resume()
             raise
         retrieval_s=budget['retrieval_s']
+        context_assembly_s=time.perf_counter()-context_started
         self.last_diagnostics = {'messages':messages,'retrieved':retrieved,'retrieval_s':retrieval_s,
                                  'context_chars':sum(len(message['content']) for message in messages),'budget':budget,
                                  'memory_selection':getattr(self.memory,'last_retrieval',{})}
@@ -476,6 +554,8 @@ class Lab:
         options = {key: self.config[key] for key in OPTIONS if self.config.get(key) is not None}
         options.setdefault('num_ctx',8192)
         options.setdefault('num_predict',768)
+        if context_window is not None:options['num_ctx']=context_window
+        if response_tokens is not None:options['num_predict']=min(options['num_predict'],response_tokens)
         payload = {'model': model, 'messages': messages, 'stream': True,
                    'keep_alive': self.config.get('keep_alive', -1), 'options': options,
                    'think': self.config.get('think', False)}
@@ -557,6 +637,7 @@ class Lab:
         speed = metrics.get('eval_count', 0) * 1e9 / metrics.get('eval_duration', 0) if metrics.get('eval_duration') else 0
         return {'model': model, 'options': options, 'personality_sha256': self.profile_sha256,
                 'memory_retrieval_s':retrieval_s,'memory_extraction_s':extraction_s,
+                'context_assembly_s':context_assembly_s,
                 'first_text_s': first, 'total_s': elapsed,
                 'prompt_tokens': metrics.get('prompt_eval_count'), 'generated_tokens': metrics.get('eval_count'),
                 'tokens_per_s': speed, 'abort_reason': aborted, 'answer': text,

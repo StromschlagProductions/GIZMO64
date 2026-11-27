@@ -10,6 +10,7 @@ import json
 import re
 import secrets
 import sqlite3
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -45,6 +46,21 @@ def state_ids(value):
     return found
 
 
+def merge_patch(state, patch):
+    """Apply a small JSON merge patch; the stored state remains authoritative."""
+    if not isinstance(state, dict) or not isinstance(patch, dict):
+        raise ValueError('Invalid public state patch')
+    result = dict(state)
+    for key, value in patch.items():
+        if value is None:
+            result.pop(key, None)
+        elif isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = merge_patch(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
 class StoryDirector:
     """Story storage and director decisions, independent of LAB's Memory."""
 
@@ -66,16 +82,19 @@ class StoryDirector:
         self.db.row_factory = sqlite3.Row
         self.db.execute('PRAGMA busy_timeout=10000')
         schema_version=self.db.execute('PRAGMA user_version').fetchone()[0]
-        if schema_version>1:
+        if schema_version>2:
             self.db.close()
             raise RuntimeError('Story database schema is newer than this program')
-        if schema_version==0 and existing and self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' LIMIT 1").fetchone():
-            backup=self.path.with_name(self.path.name+'.before-v1.bak')
-            with sqlite3.connect(backup) as target:
+        if existing and schema_version<2 and self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' LIMIT 1").fetchone():
+            backup=self.path.with_name(self.path.name+'.before-v2.bak')
+            target=sqlite3.connect(backup)
+            try:
                 self.db.backup(target)
                 if target.execute('PRAGMA integrity_check').fetchone()[0]!='ok':
                     self.db.close()
                     raise RuntimeError('Story database backup failed integrity check')
+            finally:
+                target.close()
         self.db.execute('PRAGMA journal_mode=WAL')
         self.db.executescript('''
             CREATE TABLE IF NOT EXISTS worlds (
@@ -97,6 +116,12 @@ class StoryDirector:
                 UNIQUE(world_id,turn)
             );
             CREATE INDEX IF NOT EXISTS events_world_turn ON events(world_id,turn);
+            CREATE TABLE IF NOT EXISTS dialogue (
+                id INTEGER PRIMARY KEY, world_id TEXT NOT NULL, turn INTEGER NOT NULL,
+                prompt TEXT NOT NULL, reply TEXT NOT NULL, created_at TEXT NOT NULL,
+                FOREIGN KEY(world_id) REFERENCES worlds(id)
+            );
+            CREATE INDEX IF NOT EXISTS dialogue_world_turn ON dialogue(world_id,turn,id);
             CREATE TABLE IF NOT EXISTS campaign (
                 id TEXT PRIMARY KEY, schema_version INTEGER NOT NULL,
                 library_version TEXT NOT NULL, seed INTEGER NOT NULL,
@@ -104,7 +129,8 @@ class StoryDirector:
                 created_at TEXT NOT NULL
             );
         ''')
-        self.db.execute('PRAGMA user_version=1')
+        self.db.execute('PRAGMA user_version=2')
+        self.last_metrics = {}
 
     def close(self):
         self.db.close()
@@ -128,12 +154,41 @@ class StoryDirector:
         if row and row['opening_reply']:
             history.extend(({'role':'user','content':'Begin the fictional adventure.'},
                             {'role':'assistant','content':row['opening_reply']}))
-        rows=self.db.execute('SELECT action,reply FROM events WHERE world_id=? ORDER BY turn DESC LIMIT ?',
+        rows=self.db.execute('SELECT turn,action,reply FROM events WHERE world_id=? ORDER BY turn DESC LIMIT ?',
                              (world_id,limit)).fetchall()
+        first_turn=rows[-1]['turn']-1 if rows else 0
+        talks=self.db.execute('SELECT turn,prompt,reply FROM dialogue WHERE world_id=? AND turn>=? ORDER BY id DESC LIMIT 8',
+                              (world_id,first_turn)).fetchall()
+        by_turn={}
+        for item in reversed(talks):by_turn.setdefault(item['turn'],[]).append(item)
+        for item in by_turn.get(first_turn,[]):
+            history.extend(({'role':'user','content':item['prompt']},{'role':'assistant','content':item['reply']}))
         for event in reversed(rows):
             history.extend(({'role':'user','content':event['action']},
                             {'role':'assistant','content':event['reply']}))
+            for item in by_turn.get(event['turn'],[]):
+                history.extend(({'role':'user','content':item['prompt']},{'role':'assistant','content':item['reply']}))
         return history
+
+    def public_brief(self):
+        row=self.world()
+        if not row or row['status']!='active':
+            raise RuntimeError('No active fictional world')
+        events=self.events(row['id'],limit=2)
+        return {'world_id':row['id'],'turn':row['turn'],
+                'opening':row['opening_scene'] if row['turn']==0 else None,
+                'public_state':json.loads(row['public_state_json']),
+                'recent_observations':events}
+
+    def save_dialogue(self,world_id,turn,prompt,reply):
+        if self.stopping():raise RuntimeError('Story Director is stopping')
+        prompt=clean(prompt,1200);reply=clean(reply,5000)
+        with self.db:
+            row=self.db.execute('SELECT turn,status FROM worlds WHERE id=?',(world_id,)).fetchone()
+            if not row or row['turn']!=turn or row['status']!='active':
+                raise RuntimeError('Story state changed while dialogue was generated')
+            self.db.execute('INSERT INTO dialogue(world_id,turn,prompt,reply,created_at) VALUES(?,?,?,?,?)',
+                            (world_id,turn,prompt,reply,now()))
 
     def _generate(self, instructions, request, schema, max_tokens=650):
         if self.stopping():raise RuntimeError('Story Director is stopping')
@@ -144,6 +199,7 @@ class StoryDirector:
                    'options': {'temperature': 0.55, 'num_predict': max_tokens, 'num_ctx': 6144},
                    'messages': [{'role': 'system', 'content': instructions},
                                 {'role': 'user', 'content': request}]}
+        started=time.perf_counter()
         with self.request('/api/chat', payload, timeout=150) as response:
             self.response_opened(response)
             try:packet = json.load(response)
@@ -151,6 +207,12 @@ class StoryDirector:
         if self.stopping():raise RuntimeError('Story Director is stopping')
         if packet.get('error'):
             raise RuntimeError(packet['error'])
+        self.last_metrics={'wall_s':time.perf_counter()-started,
+                           'load_s':packet.get('load_duration',0)/1e9,
+                           'prompt_eval_s':packet.get('prompt_eval_duration',0)/1e9,
+                           'eval_s':packet.get('eval_duration',0)/1e9,
+                           'prompt_tokens':packet.get('prompt_eval_count'),
+                           'generated_tokens':packet.get('eval_count')}
         result = json.loads(packet['message']['content'])
         if not isinstance(result, dict):
             raise ValueError('Director returned no JSON object')
@@ -308,8 +370,10 @@ class StoryDirector:
             'Do not reveal or paraphrase the hidden truth; the current adventure may be unrelated. '
             'Return JSON with matching event_id, expected_version, public_scene (observations only), '
             'consequence (concrete change or valid reason action could not occur), '
-            'public_state (updated object), referenced_ids (only IDs from allowed_reference_ids; empty is valid), '
+            'state_patch (only changed public keys, using JSON Merge Patch; empty object for no change), '
+            'referenced_ids (only IDs from allowed_reference_ids; empty is valid), '
             'complete (boolean; only after a genuinely earned local ending). '
+            'Use short, concrete public_scene and consequence fields. Do not repeat the whole world state. '
             'Never write future plot or secret information in public fields. '
             'Respect player choice; no forced path. During an active opt-in adventure, '
             'an occasional small incidental discovery may arise from the established world '
@@ -319,20 +383,23 @@ class StoryDirector:
         schema={'type':'object','properties':{
             'event_id':{'type':'string'},'expected_version':{'type':'integer'},
             'public_scene':{'type':'string'},'consequence':{'type':'string'},
-            'public_state':{'type':'object'},
+            'state_patch':{'type':'object'},
             'referenced_ids':{'type':'array','items':{'type':'string','enum':allowed_ids},'maxItems':12},
             'complete':{'type':'boolean'}},
-            'required':['event_id','expected_version','public_scene','consequence','public_state','referenced_ids','complete']}
+            'required':['event_id','expected_version','public_scene','consequence','state_patch','referenced_ids','complete']}
         last_error=None
         for attempt in range(2):
             try:
-                result=self._generate(instructions,request if attempt==0 else request+' Repair invalid output; keep the same event ID and version.',schema,800)
+                result=self._generate(instructions,request if attempt==0 else request+' Repair invalid output; keep the same event ID and version.',schema,400)
                 if result['event_id']!=event_id or result['expected_version']!=row['turn']:
                     raise ValueError('Director event ID or version mismatch')
                 scene=self._safe_scene(result['public_scene'],secret)
                 consequence=self._safe_scene(result['consequence'],secret)
-                state=result['public_state']
-                if not isinstance(state,dict) or len(json.dumps(state))>4000:
+                patch=result['state_patch']
+                if not isinstance(patch,dict) or len(json.dumps(patch))>2000:
+                    raise ValueError('Invalid public world patch')
+                state=merge_patch(current_state,patch)
+                if len(json.dumps(state))>4000:
                     raise ValueError('Invalid public world state')
                 self._safe_scene(json.dumps(state,ensure_ascii=False),secret)
                 if not isinstance(result['referenced_ids'],list) or not set(result['referenced_ids'])<=set(allowed_ids):
@@ -401,6 +468,20 @@ class StoryDirector:
             return 'abandon'
         if value in ('/talk','/pause','/stopstory') or re.search(r'\b(pause|stop|leave) (?:the |our )?(?:story|adventure)\b|\b(let us|let\'s) (?:just )?talk\b',value):
             return 'pause'
-        if active and re.fullmatch(r'(?:how are you|wie geht es dir|can we talk about .+|let\'s talk about .+|lass uns über .+ reden)[?.!]*',value):
-            return 'talk'
-        return 'action' if active else 'normal'
+        if not active:
+            return 'normal'
+        # Deterministic routing. Ambiguous utterances stay in dialogue and
+        # cannot change the world state or create new canon.
+        verbs=(r'inspect|examine|look|search|open|close|take|pick|grab|put|place|'
+               r'give|show|ask|speak|talk to|tell|walk|go|move|enter|leave|'
+               r'follow|touch|press|pull|push|read|write|use|try|test|wait|'
+               r'hide|listen|investigate|explore|choose|turn|unlock|knock|'
+               r'untersuche|schaue|suche|öffne|schließe|nehme|gehe|frage|'
+               r'spreche|lese|drücke|ziehe|lege|folge|betrete|verlasse')
+        if re.match(rf'^(?:i |ich |we |wir |let\'s |lass uns )(?:will |would like to |want to |am going to |möchte |werde )?(?:carefully |slowly |quietly |quickly |vorsichtig |leise )?(?:{verbs})\b',value):
+            return 'action'
+        if re.match(rf'^(?:can|could|would) you (?:please )?(?:{verbs})\b',value) and not re.match(r'^(?:can|could|would) you (?:please )?(?:tell|show) me\b',value):
+            return 'action'
+        if re.match(rf'^(?:please |bitte )?(?:{verbs})\b',value) and not value.endswith('?'):
+            return 'action'
+        return 'dialogue'
