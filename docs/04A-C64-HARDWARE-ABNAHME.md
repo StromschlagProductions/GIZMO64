@@ -4,7 +4,7 @@ Die C64-PRG und die Kommunikationsquellen stammen unverändert aus dem hardwareg
 
 ## Gemeldeter Teilbefund zum Ultimate (26.11.2026)
 
-Der Benutzer meldete für den ersten realen Test von LAB 0.7.0 auf dem C64 Ultimate funktionierende Gespräche, `DIAG` mit `OV:0` und `DROP:0` sowie eine wahrgenommene Latenz von etwa 1–3 Sekunden bis zum ersten Antworttext. Das bestätigt diesen einzelnen Dialog-/Transportversuch. Ein Test mit mindestens 100 empfangenen Antwortzeilen, Scrollen und Tippen während des Empfangs sowie eine dokumentierte Wiederverbindung wurden dabei noch nicht gemeldet; sie gelten weiterhin als offen. Für die neue 04B-Oberfläche liegt noch keine Hardwareprüfung vor.
+Der Benutzer meldete für den ersten realen Test von LAB 0.7.0 auf dem C64 Ultimate funktionierende Gespräche, `DIAG` mit `OV:0` und `DROP:0` sowie eine wahrgenommene Latenz von etwa 1–3 Sekunden bis zum ersten Antworttext. Das bestätigt diesen einzelnen Dialog-/Transportversuch. Ein Test mit mindestens 100 empfangenen Antwortzeilen, Scrollen und Tippen während des Empfangs sowie eine dokumentierte Wiederverbindung wurden dabei noch nicht gemeldet; sie gelten weiterhin als offen. Am 27.11.2026 wurde zusätzlich der erfolgreiche Grundbetrieb des neuen 04B-PRG auf dem Ultimate gemeldet; Details und offene Prüfungen stehen in `04B-C64-TERMINAL.md`.
 
 ## Einfacher Start
 

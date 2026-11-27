@@ -1,11 +1,11 @@
 {
   "program": "build/GIZMO64-04B.PRG",
-  "program_sha256": "5db123190db4204008e23f79418a98257d5f42ba3048b1f266fd64b8b66e44a7",
+  "program_sha256": "ba43e17124d72491d8951d05069839e9de2ef8bcdadd9eb297a05e6de445e8be",
   "emulator": "VICE 3.9 SDL2",
   "hardware_link_emulated": false,
   "screenshots": {
-    "green": "06120b6068e7306b0a0355cce7d21f0fd3bf3135e582bc0a29709dbc455a6afa",
-    "ice": "a8591a4479bf6067e09c39f724fc8c5146d881454fce24ddc9750db0895e42b2",
+    "green": "ec5ee5bf633e31fe76efef87945bb1a6ef63b49649b0ac72a4d350a751e689e3",
+    "ice": "23c66938b5feac9de0edba3b07202ac5788c20fce4c33fe293589a9a2ca3bdcf",
     "input": "2f53384c48ddba105d71a0413c630df141b54ea9e014024b35b3f19db139d449",
     "service": "87a8d4a3e66ffb6f2fd79cc6c11fc72d4b873648d2954c728329d20993fbb602"
   }

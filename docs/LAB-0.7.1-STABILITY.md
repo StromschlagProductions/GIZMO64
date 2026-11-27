@@ -16,4 +16,6 @@ Der SHUTDOWN-Button schließt nach dem kontrollierten Stoppen von Core, Uplink u
 
 ## C64-Befund und Grenze
 
-`src/link.c` ist gegenüber dem hardwaregetesteten Stand 0.2.2 unverändert. In der 04B-Linker-Map endet BSS vor dem Screen-RAM ab `$6400`; Font und Sprites liegen bei `$7000` und `$7800`. Ein synthetischer VICE-3.9-SwiftLink-Test zeigte für beide PRGs dasselbe Verhalten: `ATDT` wurde gesendet, eingehende Modemdaten konnten über diese Emulationsanordnung nicht verlässlich geprüft werden. Das ist keine Ultimate-Hardwareabnahme und kein Nachweis einer Ursache. Das neue Logo bleibt lokal, der 04B-Client wird bis zur geklärten Verbindung nicht veröffentlicht.
+`src/link.c` ist gegenüber dem hardwaregetesteten Stand 0.2.2 unverändert. In der 04B-Linker-Map endet BSS vor dem Screen-RAM ab `$6400`; Font und Sprites liegen bei `$7000` und `$7800`. Ein synthetischer VICE-3.9-SwiftLink-Test zeigte für beide PRGs dasselbe Verhalten: `ATDT` wurde gesendet, eingehende Modemdaten konnten über diese Emulationsanordnung nicht verlässlich geprüft werden. Dieser VICE-Test allein war keine Ultimate-Hardwareabnahme und kein Nachweis einer Ursache.
+
+Nachtrag vom 27.11.2026: Der Benutzer meldete, dass beide PRGs auf echter Ultimate-Hardware eine Verbindung herstellen und Gespräche mit persönlichem Erinnerungsabruf funktionieren. Für 04B weiter offene Hardwareprüfungen sind in `04B-C64-TERMINAL.md` aufgeführt.

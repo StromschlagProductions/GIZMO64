@@ -1,10 +1,10 @@
 # GIZMO-64
 
-## Aktuell: LAB 0.7.0 / C64-Uplink 04A
+## Aktuell: LAB 0.7.1 / C64-Terminal 0.2.3
 
-Das PC-Control-Center und das originale C64-PRG 0.2.2 benutzen dieselbe LAB-Engine, dasselbe Modell, Persönlichkeitsprofil und lokale Gedächtnisdatenbank. `GIZMO.cmd` startet das Control Center; der C64-Uplink wird einmalig unter SETTINGS aktiviert und startet danach mit START CORE. Der alte eigenständige Bridge-Starter startet keine zweite Engine mehr. Die [04A-Anleitung und Hardwareabnahme](docs/04A-C64-HARDWARE-ABNAHME.md) beschreibt den einfachen Start und die noch offene Ultimate-Prüfung. Die folgenden Abschnitte dokumentieren ältere C64-Versionen und deren damalige Bridge.
+Das PC-Control-Center und das neue C64-PRG 0.2.3 benutzen dieselbe LAB-Engine, dasselbe Modell, Persönlichkeitsprofil und lokale Gedächtnisdatenbank. `GIZMO.cmd` startet das Control Center; der C64-Uplink wird unter SETTINGS aktiviert und startet mit START CORE. Der alte eigenständige Bridge-Starter startet keine zweite Engine mehr. [04B-Terminal und Hardwarebefund](docs/04B-C64-TERMINAL.md) beschreiben die aktuelle Oberfläche und die Grenzen der bisherigen Ultimate-Prüfung. Die folgenden Abschnitte dokumentieren ältere C64-Versionen und deren damalige Bridge.
 
-Die neue [04B-Terminaloberfläche](docs/04B-C64-TERMINAL.md) ist als lokales PRG kompiliert und im VICE geprüft. Ihre optische Freigabe und der Ultimate-Test stehen noch aus; der produktive PC-Stand und das stabile C64-PRG 0.2.2 bleiben verfügbar.
+Die neue C64-Oberfläche wurde kompiliert, im VICE geprüft und auf echter Ultimate-Hardware für Verbindung, Eingabe, Antworten und persönlichen Erinnerungsabruf erprobt. Lange Antworten, Scrollback während des Empfangs, Wiederverbindung und neue `OV`-/`DROP`-Messwerte sind noch offen. Die originale C64-PRG 0.2.2 bleibt als Rückfallversion verfügbar.
 
 GIZMO-64 ist ein nativer C64-Ultimate-Client mit einer lokalen Python-TCP-Brücke zu Ollama. Version 0.2.1 ergänzt gestreamte, längere Antworten, eine ausgearbeitete Persönlichkeit und einen eigenen 5×7-Zeichensatz. Der hardwaregetestete Stand 0.1.2 ist als Git-Tag `v0.1.2` gesichert.
 

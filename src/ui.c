@@ -101,10 +101,10 @@ static void draw_status(void)
     else if (!live) print_at(0, 3,
         history_count > view_start + DIALOG_ROWS ? "SCROLLBACK / NEW LINES / F7 LIVE" :
         "SCROLLBACK / F7 LIVE", accents[palette]);
-    else if (link_state == LINK_ONLINE) print_at(0, 3, "READY", accents[palette]);
     else if (link_state == LINK_OFFLINE || link_state == LINK_ERROR)
         print_at(0, 3, "SYSTEM UNAVAILABLE", accents[palette]);
-    else print_at(0, 3, "INITIALIZING", accents[palette]);
+    else if (link_state != LINK_ONLINE)
+        print_at(0, 3, "INITIALIZING", accents[palette]);
 }
 
 static void draw_footer(void)

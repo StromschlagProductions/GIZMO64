@@ -26,7 +26,7 @@ test:
 	python3 -m unittest discover -s tests -p 'test_*.py'
 
 package: all
-	python3 tools/package.py
+	python3 tools/package_023.py --prg GIZMO64.PRG --output GIZMO64-v0.2.3.zip
 
 package-022: all
 	python3 tools/package_022.py

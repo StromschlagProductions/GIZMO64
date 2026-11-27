@@ -56,7 +56,7 @@ int main(void)
     assert(ui_test_color(0,4)==3); /* no third palette */
     ui_theme();
     link_state=LINK_ONLINE;frame(0);
-    assert(ui_test_cell(0,3)==18); /* READY appears below the logo */
+    for (i=0;i<40;++i) assert(ui_test_cell(i,3)==32); /* clear gap when online */
     for (i=0;i<8;++i) frame(1);
     assert(ui_test_register(0x67f8)==0xe2 && ui_test_register(0x67f9)==0xe3);
     for (i=0;i<8;++i) frame(0);
