@@ -1,10 +1,13 @@
 #include <conio.h>
 #include <string.h>
 #include "ui.h"
+#include "ui_bitmap.h"
 #include "link.h"
 
 static char input[121];
 static unsigned char input_length;
+static unsigned char commodore_held;
+extern unsigned char commodore_pressed(void);
 
 static void service_command(void)
 {
@@ -32,12 +35,12 @@ static void execute(void)
 {
     if (!input_length) return;
     if (ui_service_active()) service_command();
+    else if (strcmp(input,"HELP") == 0) ui_help_toggle();
     else if (strcmp(input,"CLS") == 0) ui_clear();
     else if (strcmp(input,"DIAG") == 0 || strcmp(input,"HEX") == 0 ||
              strcmp(input,"STATUS") == 0 || strcmp(input,"PING") == 0 ||
              strcmp(input,"UPLINK") == 0 || strcmp(input,"OFFLINE") == 0 ||
-             strcmp(input,"IP") == 0 || strncmp(input,"IP ",3) == 0 ||
-             strcmp(input,"HELP") == 0) ui_line("F8 SERVICE");
+             strcmp(input,"IP") == 0 || strncmp(input,"IP ",3) == 0) ui_line("F8 SERVICE");
     else {
         ui_submit(input);
         if (link_state == LINK_ONLINE) {
@@ -52,15 +55,33 @@ static void execute(void)
 static void keyboard(void)
 {
     unsigned char c;
+    unsigned char down=commodore_pressed() ||
+        ((*(volatile unsigned char *)0x028d & 0x02)!=0);
+    if (down && !commodore_held) {
+        commodore_held=1;
+        ui_help_toggle();
+        return;
+    }
+    if (!down) commodore_held=0;
     if (!kbhit()) return;
     c = cgetc();
     if (c == 0x85) { ui_theme(); return; }       /* F1 */
+    if (c == 0x89) { ui_smaller(); return; }     /* F2 */
     if (c == 0x86) { ui_scroll_back(); return; } /* F3 */
+    if (c == 0x8a) { ui_larger(); return; }      /* F4 */
     if (c == 0x87) { ui_scroll_next(); return; } /* F5 */
+    if (c == 0x8b) { ui_border_toggle(); return; } /* F6: safe fallback */
     if (c == 0x88) { ui_scroll_live(); return; } /* F7 */
     if (c == 0x8c) {                            /* F8 */
         if (ui_service_toggle()) link_diagnostics();
         ui_prompt(input);
+        return;
+    }
+    if (down && (c == 0xc8 || c == 'H')) return;
+    if (ui_menu_active()) {
+        if (c==0x91) ui_menu_move(-1);
+        else if (c==0x11) ui_menu_move(1);
+        else if (c==13) ui_menu_activate();
         return;
     }
     ui_key_sound();
@@ -77,6 +98,7 @@ static void keyboard(void)
     }
 #ifdef __CC65__
     if (c >= 0x41 && c <= 0x5a) c += 128;
+    c=ui_keyboard_map(c);
     if (!((c >= 0xc1 && c <= 0xda) || (c >= 32 && c <= 64) ||
           (c >= 91 && c <= 95))) return;
 #else
@@ -92,8 +114,19 @@ static void keyboard(void)
 int main(void)
 {
     ui_init();
+#ifdef GIZMO_DEMO
+    link_state=LINK_ONLINE;
+#ifdef GIZMO_DEMO_COMPACT
+    ui_smaller();
+#endif
+#ifdef GIZMO_DEMO_DENSE
+    ui_smaller();ui_smaller();
+#endif
+    ui_demo_seed();
+#else
     link_init();
     link_connect();
+#endif
     ui_prompt(input);
     for (;;) {
         link_tick();

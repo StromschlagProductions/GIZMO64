@@ -1,5 +1,7 @@
 # Hardwarekorrektur nach dem ersten Ultimate-Test
 
+Historischer Entwicklungsbericht. Der hier beschriebene Zeichensatzkandidat wurde nach erfolgreicher optischer und ergonomischer Ultimate-Abnahme als [C64-Client 0.3.0](C64-0.3.0-RELEASE.md) freigegeben. Die unten stehende damalige Aussage „Keine Veröffentlichung“ bezieht sich auf den Entwicklungszeitpunkt.
+
 Branch `develop/experimental-c64-display`. Der produktive Client 0.2.3, `GIZMO64.PRG`, LAB 0.7.1, die PC-Engine und `src/link.c` bleiben unangetastet. Die Messdaten stammen ausschließlich aus x64sc mit PAL-VIC-II 6569 und synthetischen Texten.
 
 ## Fehlerursachen

@@ -1,5 +1,7 @@
 #include <string.h>
+#include <cbm.h>
 #include "ui.h"
+#include "ui_bitmap.h"
 #include "link.h"
 #include "header_art.h"
 
@@ -19,14 +21,20 @@ static unsigned char test_registers[65536];
 #define SID_VOICE test_sid
 #define REGISTER(a) test_registers[a]
 #else
-#define SCREEN ((volatile unsigned char *)0x6400)
+#define SCREEN ((volatile unsigned char *)0x8400)
 #define COLORS ((volatile unsigned char *)0xd800)
 #define BORDER (*(volatile unsigned char *)0xd020)
 #define BACKGROUND (*(volatile unsigned char *)0xd021)
-#define SPRITES ((volatile unsigned char *)0x7800)
+#define SPRITES ((volatile unsigned char *)0x8800)
 #define SID_VOICE (*(volatile unsigned char *)0xd404)
 #define REGISTER(a) (*(volatile unsigned char *)(a))
 extern const unsigned char gizmo_font[2048];
+extern const unsigned char display_assets[3776];
+extern void border_irq_install(void);
+extern unsigned char border_sprites_enabled;
+extern unsigned char *bitmap_src,*bitmap_dst;
+extern unsigned char bitmap_copy_pages,bitmap_copy_remainder;
+extern void bitmap_copy_rows(void);
 #endif
 
 static const unsigned char palettes[2] = {5, 3};
@@ -42,9 +50,36 @@ static unsigned char pulse, phase, previous_raster = 255;
 static unsigned char sound_ticks, cursor_on, cursor_x, cursor_y;
 static unsigned char last_state = 255;
 static const char *editor_text = "";
-static const unsigned char wave[24] = {
-    10,10,10,9,8,6,4,3,5,8,10,11,12,14,16,17,15,12,10,9,10,10,10,10
-};
+static unsigned char menu,menu_choice,keymap,mode,safe_logo;
+static unsigned char prefs[8],prefs_result;
+static unsigned char rendered_input[74],rendered_count;
+
+static unsigned char prefs_valid(void)
+{
+    unsigned char i,check=0;
+    for (i=0;i<7;++i) check^=prefs[i];
+    return prefs[0]=='G' && prefs[1]=='Z' && prefs[2]=='P' &&
+           prefs[3]==1 && prefs[4]<2 && prefs[5]<3 && prefs[6]<2 &&
+           prefs[7]==check;
+}
+
+static void prefs_load(void)
+{
+    if (cbm_load("GIZMOPRF",8,prefs)==8 && prefs_valid()) {
+        palette=prefs[4];mode=prefs[5];keymap=prefs[6];
+    }
+}
+
+static void prefs_save(void)
+{
+    unsigned char i,check=0;
+    if (link_waiting) {prefs_result=3;return;}
+    prefs[0]='G';prefs[1]='Z';prefs[2]='P';prefs[3]=1;
+    prefs[4]=palette;prefs[5]=mode;prefs[6]=keymap;
+    for (i=0;i<7;++i) check^=prefs[i];
+    prefs[7]=check;
+    prefs_result=cbm_save("@0:GIZMOPRF",8,prefs,8) ? 2 : 1;
+}
 
 static unsigned char screen_code(unsigned char c)
 {
@@ -88,7 +123,8 @@ static void draw_header(void)
     unsigned char x, y;
     for (y = 0; y < 3; ++y) {
         for (x = 0; x < 40; ++x) {
-            raw_cell(x, y, gizmo_header[(unsigned int)y * 40 + x], accents[palette]);
+            raw_cell(x, y, safe_logo && !menu ? gizmo_header[(unsigned int)y * 40 + x] : 32,
+                     accents[palette]);
             if ((x & 7) == 0) link_poll();
         }
     }
@@ -112,8 +148,6 @@ static void draw_footer(void)
     clear_row(21, accents[palette]);
     print_at(0, 21, "----------------------------------------", accents[palette]);
     clear_row(24, accents[palette]);
-    if (service) print_at(0, 24, "F8 CLOSE  DIAG  HEX  IP  SOUND", accents[palette]);
-    else print_at(0, 24, "F1 COLOR F3 BACK F5 NEXT F7 LIVE", accents[palette]);
 }
 
 static unsigned char slot(unsigned char logical)
@@ -136,6 +170,40 @@ static void draw_dialog(void)
         }
     }
     draw_status();
+}
+
+static void draw_line(unsigned char row,unsigned char index)
+{
+    unsigned char x;
+    for (x=0;x<40;++x) {
+        raw_cell(x,DIALOG_TOP+row,history[index][x],palettes[palette]);
+        if ((x&7)==0) link_poll();
+    }
+}
+
+static void draw_menu(void)
+{
+    unsigned char y,x,selected=menu_choice+6;
+    for (y=4;y<=20;++y) clear_row(y,palettes[palette]);
+    print_at(1,4,"GIZMO // OPTIONS",accents[palette]);
+    print_at(1,6,"COLOR",palettes[palette]);
+    print_at(18,6,palette ? "ICE BLUE" : "GREEN",palettes[palette]);
+    print_at(1,7,"TEXT SIZE",palettes[palette]);
+    print_at(18,7,mode==0 ? "STANDARD" : mode==1 ? "COMPACT" : "DENSE",palettes[palette]);
+    print_at(1,8,"KEYBOARD",palettes[palette]);
+    print_at(18,8,keymap ? "QWERTZ" : "QWERTY",palettes[palette]);
+    print_at(1,9,"LOGO",palettes[palette]);
+    print_at(18,9,safe_logo ? "SAFE" : "BORDER",palettes[palette]);
+    print_at(1,10,"SOUND",palettes[palette]);
+    print_at(18,10,sound_enabled ? "ON" : "OFF",palettes[palette]);
+    print_at(1,11,"SAVE SETTINGS TO DRIVE 8",palettes[palette]);
+    for (x=0;x<40;++x) SCREEN[(unsigned int)selected*40+x]^=0x80;
+    print_at(0,13,"CURSOR UP/DOWN // RETURN TO CHANGE",palettes[palette]);
+    print_at(0,15,"F3/F5 SCROLLBACK  F7 LIVE  F8 SERVICE",palettes[palette]);
+    print_at(0,16,"COMMODORE KEY / HELP CLOSE",palettes[palette]);
+    if (prefs_result==1) print_at(0,18,"SETTINGS SAVED ON DRIVE 8",palettes[palette]);
+    else if (prefs_result==2) print_at(0,18,"SAVE FAILED // CHECK DRIVE 8",palettes[palette]);
+    else if (prefs_result==3) print_at(0,18,"SAVE LATER // GIZMO IS ANSWERING",palettes[palette]);
 }
 
 static void draw_service(void)
@@ -170,13 +238,16 @@ static void draw_service(void)
 static void redraw(void)
 {
     draw_header();
-    if (service) draw_service(); else draw_dialog();
+    if (menu) draw_menu();
+    else if (service) draw_service();
+    else draw_dialog();
     draw_footer();
 }
 
 static void commit(void)
 {
     unsigned char x, index;
+    unsigned char was_full=history_count>=DIALOG_ROWS;
     if (history_count == HISTORY_LINES) {
         if (!live && view_start) --view_start;
         ++history_start;
@@ -189,7 +260,16 @@ static void commit(void)
     for (x = 0; x < 40; ++x) history[index][x] = x < draft_col ? draft[x] : 32;
     draft_col = 0;
     if (live) view_start = history_count > DIALOG_ROWS ? history_count - DIALOG_ROWS : 0;
-    if (service) draw_status(); else draw_dialog();
+    if (service || menu || !live) return;
+    if (was_full) {
+        bitmap_src=(unsigned char *)(SCREEN+(DIALOG_TOP+1)*40);
+        bitmap_dst=(unsigned char *)(SCREEN+DIALOG_TOP*40);
+        bitmap_copy_pages=2;
+        bitmap_copy_remainder=128;
+        bitmap_copy_rows();
+        link_poll();
+    }
+    draw_line(was_full ? DIALOG_ROWS-1 : history_count-1,index);
 }
 
 static void put_char(unsigned char c)
@@ -261,7 +341,7 @@ void ui_scroll_back(void)
     if (service || history_count <= DIALOG_ROWS) return;
     if (live) { live = 0; view_start = history_count > DIALOG_ROWS ? history_count - DIALOG_ROWS : 0; }
     view_start = view_start > 9 ? view_start - 9 : 0;
-    draw_dialog();
+    if (!menu) draw_dialog();
 }
 
 void ui_scroll_next(void)
@@ -271,7 +351,7 @@ void ui_scroll_next(void)
     end = history_count > DIALOG_ROWS ? history_count - DIALOG_ROWS : 0;
     if (view_start + 9 >= end) { live = 1; view_start = end; }
     else view_start += 9;
-    draw_dialog();
+    if (!menu) draw_dialog();
 }
 
 void ui_scroll_live(void)
@@ -279,12 +359,21 @@ void ui_scroll_live(void)
     if (service) return;
     live = 1;
     view_start = history_count > DIALOG_ROWS ? history_count - DIALOG_ROWS : 0;
-    draw_dialog();
+    if (!menu) draw_dialog();
 }
 
 unsigned char ui_service_toggle(void)
 {
+    unsigned char was_menu=menu;
     service = !service;
+    menu=0;
+    if (was_menu) {
+        unsigned int i;
+        for (i=0;i<1024;++i) {
+            ((volatile unsigned char *)0xa400)[i]=gizmo_font[1024+i];
+            if ((i&31)==0) link_poll();
+        }
+    }
     redraw();
     return service;
 }
@@ -296,11 +385,79 @@ void ui_status_changed(void) { last_state = 255; }
 
 void ui_theme(void)
 {
+    unsigned char s;
     palette ^= 1;
-    REGISTER(0xd027) = accents[palette];
-    REGISTER(0xd028) = accents[palette];
+    for (s=0;s<8;++s) REGISTER(0xd027+s)=accents[palette];
     redraw();
+    clear_row(22,palettes[palette]);clear_row(23,palettes[palette]);
+    print_at(0,22,"YOU: ",accents[palette]);
+    rendered_count=0;cursor_on=0;
     ui_prompt(editor_text);
+}
+
+unsigned char ui_menu_active(void) {return menu;}
+unsigned char ui_keyboard_layout(void) {return keymap;}
+unsigned char ui_keyboard_map(unsigned char c)
+{
+    if (!keymap) return c;
+    if (c=='Y') return 'Z';if (c=='Z') return 'Y';
+    if (c=='y') return 'z';if (c=='z') return 'y';
+    if (c==0xd9) return 0xda;if (c==0xda) return 0xd9;
+    return c;
+}
+void ui_help_toggle(void)
+{
+    unsigned int i;
+    menu=!menu;service=0;
+    for (i=0;i<1024;++i) {
+        ((volatile unsigned char *)0xa400)[i]=menu ?
+            (unsigned char)~display_assets[(unsigned int)mode*1024+i] :
+            gizmo_font[1024+i];
+        if ((i&31)==0) link_poll();
+    }
+    redraw();
+}
+void ui_menu_move(signed char direction)
+{
+    if (!menu) return;
+    if (direction<0) menu_choice=menu_choice ? menu_choice-1 : 5;
+    else menu_choice=menu_choice==5 ? 0 : menu_choice+1;
+    draw_menu();
+}
+void ui_border_toggle(void)
+{
+    if (!REGISTER(0x02a6)) return;
+    safe_logo=!safe_logo;
+    border_sprites_enabled=safe_logo ? 0 : 0xff;
+    REGISTER(0xd015)=border_sprites_enabled;
+    redraw();
+}
+static void font_mode(unsigned char next)
+{
+    unsigned int i;
+    if (mode==next) return;
+    mode=next;
+    for (i=0;i<1024;++i) {
+        ((volatile unsigned char *)0xa000)[i]=display_assets[(unsigned int)mode*1024+i];
+        if (menu) ((volatile unsigned char *)0xa400)[i]=
+            (unsigned char)~display_assets[(unsigned int)mode*1024+i];
+        if ((i&31)==0) link_poll();
+    }
+    if (menu) draw_menu();
+}
+void ui_smaller(void) {if (mode<2) font_mode(mode+1);}
+void ui_larger(void) {if (mode) font_mode(mode-1);}
+void ui_menu_activate(void)
+{
+    if (!menu) return;
+    switch (menu_choice) {
+        case 0: ui_theme();break;
+        case 1: font_mode(mode==2 ? 0 : mode+1);break;
+        case 2: keymap^=1;draw_menu();break;
+        case 3: ui_border_toggle();break;
+        case 4: ui_sound_toggle();draw_menu();break;
+        case 5: prefs_save();draw_menu();break;
+    }
 }
 
 void ui_sound_toggle(void) { sound_enabled = !sound_enabled; }
@@ -318,42 +475,34 @@ void ui_key_sound(void)
 
 static void make_sprites(void)
 {
-    unsigned char frame, x, y, from, to, sample;
-    unsigned int offset;
-    for (frame = 0; frame < 4; ++frame) {
-        for (offset = 0; offset < 128; ++offset) SPRITES[(unsigned int)frame * 128 + offset] = 0;
-        for (x = 0; x < 48; ++x) {
-            sample = wave[(x + frame * 2) % 24];
-            from = x ? wave[(x - 1 + frame * 2) % 24] : sample;
-            to = sample;
-            if (from > to) { y = from; from = to; to = y; }
-            for (y = from; y <= to; ++y) {
-                offset = (unsigned int)frame * 128 + (unsigned int)y * 3 + (x % 24) / 8;
-                if (x >= 24) offset += 64;
-                SPRITES[offset] |= (unsigned char)(0x80 >> (x & 7));
-            }
-        }
+    unsigned int i;
+    for (i=0;i<704;++i) {
+        SPRITES[i]=display_assets[3072+i];
+        if ((i&63)==0) link_poll();
     }
 }
 
 void ui_prompt(const char *input)
 {
-    unsigned char i, x, y, length, start;
+    unsigned char i, x, y, length, start,count,old_count=rendered_count;
     editor_text = input;
     length = (unsigned char)strlen(input);
     start = length > 74 ? length - 74 : 0;
-    clear_row(22, palettes[palette]); clear_row(23, palettes[palette]);
-    print_at(0, 22, "YOU: ", accents[palette]);
-    x = 5; y = 22;
-    for (i = start; i < length; ++i) {
-        if (x == 40) { x = 0; y = 23; }
-        if (y >= 24) break;
-        cell(x++, y, input[i], palettes[palette]);
-        if ((i & 7) == 0) link_poll();
+    count=length-start;
+    if (cursor_on) raw_cell(cursor_x,cursor_y,32,palettes[palette]);
+    for (i=0;i<count || i<old_count;++i) {
+        unsigned char next=i<count ? input[start+i] : 0;
+        if (i>=old_count || i>=count || rendered_input[i]!=next) {
+            x=i+5;y=x<40 ? 22 : 23;
+            if (x>=40) x-=40;
+            cell(x,y,next ? next : 32,palettes[palette]);
+        }
+        if (i<count) rendered_input[i]=next;
     }
-    if (x == 40) { x = 0; y = 23; }
-    cursor_x = x; cursor_y = y;
-    cursor_on = 0;
+    rendered_count=count;
+    x=count+5;cursor_y=x<40 ? 22 : 23;
+    cursor_x=x<40 ? x : x-40;
+    if (cursor_on) raw_cell(cursor_x,cursor_y,96,accents[palette]);
 }
 
 void ui_input_char(unsigned char c) { (void)c; ui_prompt(editor_text); }
@@ -369,58 +518,78 @@ void ui_tick(unsigned char active)
         pulse = 0;
         if (active) phase = (phase + 1) & 3;
         else phase = 0;
-        REGISTER(0x67f8) = 0xe0 + phase * 2;
-        REGISTER(0x67f9) = 0xe1 + phase * 2;
+        REGISTER(0x87ff) = 0x27 + phase;
+        if (cursor_on) {
+            raw_cell(cursor_x,cursor_y,32,palettes[palette]);
+            cursor_on=0;
+        } else if (!waiting || editor_text[0]) {
+            raw_cell(cursor_x,cursor_y,96,accents[palette]);
+            cursor_on=1;
+        }
     }
     if (last_state != link_state) {
         last_state = link_state;
         if (service) draw_service();
         else draw_status();
     }
-    if (cursor_on) {
-        cell(cursor_x, cursor_y, ' ', palettes[palette]);
-        cursor_on = 0;
-    } else if (!waiting || editor_text[0]) {
-        raw_cell(cursor_x, cursor_y, 96, accents[palette]);
-        cursor_on = 1;
-    }
 }
 
 void ui_init(void)
 {
-    unsigned int i;
+    unsigned int i,x;unsigned char s;
+    prefs_load();
+    safe_logo=REGISTER(0x02a6) ? 0 : 1;
     REGISTER(0xdd02) |= 3;
-    REGISTER(0xdd00) = (REGISTER(0xdd00) & 0xfc) | 2;
+    REGISTER(0xdd00) = (REGISTER(0xdd00) & 0xfc) | 1;
     REGISTER(0xd011) = (REGISTER(0xd011) & 0x9f) | 0x10;
     REGISTER(0xd016) = (REGISTER(0xd016) & 0xef) | 8;
     BORDER = BACKGROUND = 0;
-    REGISTER(0xd018) = 0x9c;
+    REGISTER(0xd018) = 0x18; /* $8400 screen, $a000 RAM font, sprites at the proven $8800. */
 #ifndef GIZMO_TEST
     for (i = 0; i < 2048; ++i) {
-        ((volatile unsigned char *)0x7000)[i] = gizmo_font[i];
+        ((volatile unsigned char *)0xa000)[i] = i<1024 ?
+            display_assets[(unsigned int)mode*1024+i] : gizmo_font[i];
         if ((i & 7) == 0) link_poll();
     }
 #endif
     for (i = 0; i < 1000; ++i) { SCREEN[i] = 32; COLORS[i] = palettes[palette]; }
     make_sprites();
-    REGISTER(0xd015) = 3;
-    REGISTER(0xd010) = 3;
-    REGISTER(0xd000) = 264 - 256;
-    REGISTER(0xd001) = 50;
-    REGISTER(0xd002) = 288 - 256;
-    REGISTER(0xd003) = 50;
-    REGISTER(0xd01b) &= 0xfc;
-    REGISTER(0xd01c) &= 0xfc;
-    REGISTER(0xd01d) &= 0xfc;
-    REGISTER(0xd017) &= 0xfc;
-    REGISTER(0xd027) = accents[palette];
-    REGISTER(0xd028) = accents[palette];
-    REGISTER(0x67f8) = 0xe0;
-    REGISTER(0x67f9) = 0xe1;
+    for (s=0;s<8;++s) {
+        x=24+(unsigned int)(s==7 ? 240 : s*48);
+        REGISTER(0xd000+s*2)=(unsigned char)x;
+        REGISTER(0xd001+s*2)=20;
+        SCREEN[1016+s]=0x20+(s==7 ? 7 : s);
+        REGISTER(0xd027+s)=accents[palette];
+    }
+    REGISTER(0xd010)=0xe0;
+    REGISTER(0xd015)=safe_logo ? 0 : 0xff;
+    border_sprites_enabled=safe_logo ? 0 : 0xff;
+    REGISTER(0xd01b)=0;REGISTER(0xd01c)=0;
+    REGISTER(0xd01d)=0xff;REGISTER(0xd017)=0;
     REGISTER(0xd418) = 15;
+    REGISTER(0xbfff)=0; /* VIC idle fetch in bank 2 must not expose random bytes in the open border. */
+    if (!safe_logo) border_irq_install();
     redraw();
+    clear_row(22,palettes[palette]);clear_row(23,palettes[palette]);
+    print_at(0,22,"YOU: ",accents[palette]);
     ui_prompt("");
 }
+
+#ifdef GIZMO_DEMO
+void ui_demo_seed(void)
+{
+    unsigned char i;
+    static const char *const lines[]={
+        "YOU: GOOD EVENING, GIZMO.",
+        "GZM: GOOD EVENING. HOW WAS YOUR DAY?",
+        "YOU: WE VISITED THE OLD OBSERVATORY.",
+        "GZM: THE HILL ABOVE THE HARBOR?",
+        "YOU: YES. THE SKY WAS CLEAR AT DUSK.",
+        "GZM: THAT SOUNDS LIKE A FINE VIEW."
+    };
+    for (i=0;i<sizeof(lines)/sizeof(lines[0]);++i) ui_line(lines[i]);
+}
+#endif
 
 #ifdef GIZMO_TEST
 unsigned char ui_test_cell(unsigned char x, unsigned char y) { return SCREEN[(unsigned int)y * 40 + x]; }

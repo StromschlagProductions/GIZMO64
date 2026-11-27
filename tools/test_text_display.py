@@ -18,7 +18,8 @@ def capture(name: str, program: str, keys: str) -> Path:
             "-8", str(DRIVE)]
     if keys:
         args += ["-keybuf", keys]
-    args += ["-autostartprgmode", "1", "-autostart", str(BUILD / program),
+    program_path = Path(program)
+    args += ["-autostartprgmode", "1", "-autostart", str(program_path if program_path.is_absolute() else BUILD / program_path),
              "-exitscreenshot", str(image), "-limitcycles", "30000000", "-silent"]
     result = subprocess.run(args, cwd=VICE.parent, timeout=120)
     if result.returncode not in (0, 1) or not image.is_file():
@@ -42,6 +43,7 @@ def main() -> None:
         subprocess.run([str(C1541), "-format", "GIZMO,02", "d64", str(DRIVE)],
                        cwd=ROOT, capture_output=True, check=True)
     cases = {
+        "release": (str(ROOT / "GIZMO64.PRG"), ""),
         "demo": ("GIZMO64-TEXT-DEMO.PRG", ""),
         "f2": ("GIZMO64-TEXT-DEMO.PRG", r"\x89"),
         "f4": ("GIZMO64-TEXT-COMPACT.PRG", r"\x8a"),
@@ -54,6 +56,8 @@ def main() -> None:
     images = {name: BUILD / f"text-{name}.png" if reuse else capture(name, *case)
               for name, case in cases.items()}
     dialog = lambda path: crop(path, 48, 360, 76, 212)
+    if crop(images["release"], 48, 360, 8, 40) != crop(images["demo"], 48, 360, 8, 40):
+        raise RuntimeError("Released PRG did not render the accepted logo")
     if dialog(images["f2"]) == dialog(images["demo"]):
         raise RuntimeError("F2 did not switch the character font")
     if dialog(images["f4"]) != dialog(images["demo"]):

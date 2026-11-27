@@ -1,10 +1,12 @@
 # GIZMO-64
 
-## Aktuell: LAB 0.7.1 / C64-Terminal 0.2.3
+## Aktuell: LAB 0.7.1 / C64-Client 0.3.0
 
-Das PC-Control-Center und das neue C64-PRG 0.2.3 benutzen dieselbe LAB-Engine, dasselbe Modell, Persönlichkeitsprofil und lokale Gedächtnisdatenbank. `GIZMO.cmd` startet das Control Center; der C64-Uplink wird unter SETTINGS aktiviert und startet mit START CORE. Der alte eigenständige Bridge-Starter startet keine zweite Engine mehr. [04B-Terminal und Hardwarebefund](docs/04B-C64-TERMINAL.md) beschreiben die aktuelle Oberfläche und die Grenzen der bisherigen Ultimate-Prüfung. Die folgenden Abschnitte dokumentieren ältere C64-Versionen und deren damalige Bridge.
+Der auf C64 Ultimate optisch und ergonomisch abgenommene Zeichensatzclient 0.3.0 liegt als `GIZMO64.PRG` und `GIZMO64-v0.3.0.zip` vor. [Freigabebefund](docs/C64-0.3.0-RELEASE.md) und [Kurzanleitung](docs/kurzanleitung-0.3.0.md) unterscheiden bestätigte Hardwarefunktionen von noch offenen Prüfungen. Der vorherige Stand 0.2.3 bleibt als Rückfallpaket und Git-Tag erhalten. Die PC-Version bleibt LAB 0.7.1.
 
-Die neue C64-Oberfläche wurde kompiliert, im VICE geprüft und auf echter Ultimate-Hardware für Verbindung, Eingabe, Antworten und persönlichen Erinnerungsabruf erprobt. Lange Antworten, Scrollback während des Empfangs, Wiederverbindung und neue `OV`-/`DROP`-Messwerte sind noch offen. Die originale C64-PRG 0.2.2 bleibt als Rückfallversion verfügbar.
+Das PC-Control-Center und der C64-Client 0.3.0 benutzen dieselbe LAB-Engine, dasselbe Modell, Persönlichkeitsprofil und lokale Gedächtnisdatenbank. `GIZMO.cmd` startet das Control Center; der C64-Uplink wird unter SETTINGS aktiviert und startet mit START CORE. Der alte eigenständige Bridge-Starter startet keine zweite Engine mehr. [Freigabebefund 0.3.0](docs/C64-0.3.0-RELEASE.md) beschreibt die neue Oberfläche und die Grenzen der Ultimate-Prüfung. Die folgenden Abschnitte dokumentieren ältere C64-Versionen und deren damalige Bridge.
+
+Die 0.3.0-Oberfläche wurde kompiliert, im VICE geprüft und auf echter Ultimate-Hardware optisch und ergonomisch abgenommen. Lange Antworten, Scrollback während des Empfangs, Wiederverbindung sowie `OV`-/`DROP`-Messwerte für 0.3.0 sind noch offen. C64-Client 0.2.3 bleibt als Rückfallversion verfügbar.
 
 GIZMO-64 ist ein nativer C64-Ultimate-Client mit einer lokalen Python-TCP-Brücke zu Ollama. Version 0.2.1 ergänzt gestreamte, längere Antworten, eine ausgearbeitete Persönlichkeit und einen eigenen 5×7-Zeichensatz. Der hardwaregetestete Stand 0.1.2 ist als Git-Tag `v0.1.2` gesichert.
 
