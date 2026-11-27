@@ -257,6 +257,11 @@ class Lab:
         self.active_response = None
         self.context = []
         self.memory = Memory(self.data / 'memory.sqlite3')
+        self.story = None
+        try:self.configure_story()
+        except Exception:
+            self.memory.close()
+            raise
         self.analyzer = None
         self.uplink = None
         self.previous_message_at = self.memory.last_message_time()
@@ -364,13 +369,91 @@ class Lab:
             finally:
                 if self.analyzer:self.analyzer.resume()
 
+    def configure_story(self):
+        enabled=bool(self.config.get('story_enabled',False))
+        if enabled and self.story is None:
+            from story import StoryDirector
+            self.story=StoryDirector(self.data/'story.sqlite3',self.request,
+                                     lambda:self.model or self.config.get('model',DEFAULT_MODEL),
+                                     stopping=self.stop_event.is_set,
+                                     response_opened=lambda response:setattr(self,'active_response',response))
+        elif not enabled and self.story is not None:
+            self.story.close();self.story=None
+
     def chat(self, prompt, context=None, on_text=None, model=None, origin='terminal'):
         with self.chat_lock:
             with self.lock:
                 if self.stop_event.is_set():raise RuntimeError('GIZMO LAB wird beendet')
                 self.chat_done.clear()
-            try:return self._chat(prompt,context,on_text,model,origin)
+            try:
+                if context is None and self.story:
+                    active=self.story.status()['status']=='active'
+                    intent=self.story.intent(prompt,active)
+                    if intent=='talk':
+                        self.story.pause()
+                        return self._chat(prompt,context,on_text,model,origin)
+                    if intent!='normal':
+                        return self._story_chat(prompt,intent,on_text,model,origin)
+                return self._chat(prompt,context,on_text,model,origin)
             finally:self.chat_done.set()
+
+    def _story_chat(self,prompt,intent,on_text,model,origin):
+        started=time.perf_counter()
+        def simple(answer,abort='completed'):
+            if on_text:on_text(answer)
+            elapsed=time.perf_counter()-started
+            return {'model':model or self.model,'options':{},'personality_sha256':self.profile_sha256,
+                    'memory_retrieval_s':0,'memory_extraction_s':0,'first_text_s':elapsed,
+                    'total_s':elapsed,'prompt_tokens':0,'generated_tokens':0,'tokens_per_s':0,
+                    'abort_reason':abort,'answer':answer,'ollama_metrics':{}}
+        if intent=='pause':
+            self.story.pause()
+            return simple('The fictional adventure is paused. We can talk normally.')
+        if intent=='abandon':
+            self.story.abandon()
+            return simple('The fictional adventure has ended. We can talk normally.')
+        if intent=='origin' and self.story.status()['status'] in ('active','paused'):
+            return simple('Pause or finish the current adventure before beginning the Origin Mystery.')
+        if intent in ('start','origin'):
+            mode='connected' if intent=='origin' else 'standalone'
+            style=prompt.split(' ',1)[1].strip()[:120] if prompt.startswith(('/story ','/origin ')) else 'open'
+            opening=self.story.begin(style=style,mode=mode)
+            if not opening['new']:
+                return simple('We can continue the fictional adventure where we left off.')
+            scene=opening['scene'];decision=None
+        else:
+            decision=self.story.plan(prompt)
+            scene=decision['scene']+'\nConsequence: '+decision['consequence']
+        dialogue_prompt=('We are in an explicitly fictional adventure. Speak as GIZMO, in your usual '
+                         'personality, using only the following released observations. Do not assert '
+                         'fiction as the user\'s real biography. Do not invent secret causes, unseen '
+                         'events or future outcomes. Present the situation naturally and leave a free '
+                         'choice. No menu is required.\nReleased observations:\n'+scene)
+        world_id=opening['world_id'] if decision is None else decision['world_id']
+        history=self.story.dialogue_history(world_id)
+        try:result=self._chat(dialogue_prompt,context=history,on_text=None,model=model,origin=origin)
+        except Exception:
+            if decision is None:self.story.discard_unseen(opening['world_id'])
+            raise
+        if result['abort_reason']!='completed' or not result['answer'].strip():
+            if decision is None:self.story.discard_unseen(opening['world_id'])
+            return simple('The fictional scene could not be completed. No story progress was saved.','story_generation_failed')
+        answer=result['answer']
+        try:
+            self.story.validate_reply(answer,world_id)
+        except ValueError:
+            if decision is None:self.story.discard_unseen(opening['world_id'])
+            return simple('The fictional scene could not be safely shown. No story progress was saved.','story_validation_failed')
+        if decision is None:self.story.commit_opening(opening['world_id'],answer)
+        else:self.story.commit(decision,answer)
+        if on_text:on_text(answer)
+        elapsed=time.perf_counter()-started
+        result['answer']=answer
+        result['first_text_s']=elapsed
+        result['total_s']=elapsed
+        result['memory_retrieval_s']=0
+        result['memory_extraction_s']=0
+        return result
 
     def _chat(self, prompt, context=None, on_text=None, model=None, origin='terminal'):
         if self.analyzer:
@@ -530,6 +613,8 @@ class Lab:
             print('[+] GIZMO LAB beendet', flush=True)
             self.ollama_ready = False
             self.memory.close()
+            if self.story:
+                self.story.close();self.story=None
 
 
 def run_benchmark(lab, questions, variants, destination):
@@ -720,6 +805,8 @@ def run_gui(screenshot=None, qa_report=None, config_qa_report=None):
             row=QHBoxLayout();self.prompt=QLineEdit();self.prompt.setPlaceholderText('Speak to GIZMO…');self.prompt.returnPressed.connect(self.send)
             self.send_button=QPushButton('SEND');self.send_button.clicked.connect(self.send);row.addWidget(self.prompt,1);row.addWidget(self.send_button);layout.addLayout(row)
             self.chat_status=self.label('CORE OFFLINE','dim');layout.addWidget(self.chat_status)
+            story_hint=self.label('FICTION // Enable Story Director in SETTINGS. /story begins; /origin starts the optional long arc; /pause returns to ordinary talk.','dim')
+            story_hint.setWordWrap(True);layout.addWidget(story_hint)
         def build_settings_page(self):
             layout=self.page('SETTINGS');form=QFormLayout();self.settings_fields={}
             for key,minimum,maximum in [('temperature',0,2),('top_p',0,1),('min_p',0,1),('repeat_penalty',0,3)]:
@@ -736,6 +823,8 @@ def run_gui(screenshot=None, qa_report=None, config_qa_report=None):
             layout.addWidget(self.profile_warning)
             self.uplink_enabled=QCheckBox('ENABLE COMMODORE UPLINK WHEN CORE STARTS')
             layout.addWidget(self.uplink_enabled)
+            self.story_enabled=QCheckBox('ENABLE STORY DIRECTOR (FICTIONAL ADVENTURES)')
+            layout.addWidget(self.story_enabled)
             self.uplink_host=QLineEdit();self.uplink_host.setPlaceholderText('auto (private LAN address)')
             form.addRow('UPLINK HOST',self.uplink_host)
             self.uplink_port=QSpinBox();self.uplink_port.setRange(1,65535);form.addRow('UPLINK PORT',self.uplink_port)
@@ -905,6 +994,7 @@ def run_gui(screenshot=None, qa_report=None, config_qa_report=None):
                 number=-1 if key=='seed' and value is None else (value or 0)
                 field.setValue(int(number) if isinstance(field,QSpinBox) else float(number))
             self.uplink_enabled.setChecked(bool(config.get('uplink_enabled',False)))
+            self.story_enabled.setChecked(bool(config.get('story_enabled',False)))
             self.uplink_host.setText(str(config.get('uplink_host','auto')))
             self.uplink_port.setValue(int(config.get('uplink_port',6464)))
             self.show_profile()
@@ -927,6 +1017,7 @@ def run_gui(screenshot=None, qa_report=None, config_qa_report=None):
             config=dict(self.lab.config if self.lab else self.saved_config)
             for key,field in self.settings_fields.items():config[key]=None if key=='seed' and field.value()==-1 else field.value()
             config['uplink_enabled']=self.uplink_enabled.isChecked()
+            config['story_enabled']=self.story_enabled.isChecked()
             config['uplink_host']=self.uplink_host.text().strip() or 'auto'
             config['uplink_port']=self.uplink_port.value()
             if config['uplink_enabled'] and config['uplink_host']!='auto':
@@ -955,7 +1046,14 @@ def run_gui(screenshot=None, qa_report=None, config_qa_report=None):
             self.saved_config=config
             if self.lab:
                 prior=self.lab.uplink.status() if self.lab.uplink else None
+                previous_config=self.lab.config
                 self.lab.config=config
+                try:self.lab.configure_story()
+                except (OSError,ValueError,RuntimeError) as error:
+                    self.lab.config=previous_config
+                    self.persist_config(previous_config)
+                    self.saved_config=previous_config
+                    QMessageBox.warning(self,'Story Director unavailable',str(error));return
                 if not config['uplink_enabled']:self.lab.stop_uplink()
                 else:
                     try:bind_host=uplink_bind_host(config['uplink_host'])
@@ -1111,7 +1209,9 @@ def run_gui(screenshot=None, qa_report=None, config_qa_report=None):
             self.indicators['c64'].setText(uplink['state'].upper())
             endpoint=f"{uplink['host']}:{uplink['port']}" if uplink['host'] else 'OFF'
             self.uplink_detail.setText('UPLINK // '+uplink['state'].upper()+'  '+endpoint+('  ERROR: '+uplink['error'] if uplink['error'] else ''))
-            self.indicators['story'].setText('NOT INSTALLED')
+            self.indicators['story'].setText(
+                self.lab.story.status()['status'].upper() if self.lab and self.lab.story else
+                ('READY' if self.saved_config.get('story_enabled') else 'DISABLED'))
             if active and not self.busy:
                 try:
                     self.metrics['memories'].setText(str(self.lab.memory.db.execute("SELECT (SELECT COUNT(*) FROM memories WHERE status='active')+(SELECT COUNT(*) FROM relations WHERE status='active')").fetchone()[0]))
@@ -1186,7 +1286,8 @@ def run_gui(screenshot=None, qa_report=None, config_qa_report=None):
         report={'checks':{},'error':None}
         expected={'temperature':0.42,'top_p':0.83,'top_k':37,'min_p':0.12,
                   'repeat_penalty':1.23,'num_ctx':6144,'num_predict':321,'seed':12345,
-                  'uplink_enabled':True,'uplink_host':'127.0.0.1','uplink_port':6464}
+                  'uplink_enabled':True,'uplink_host':'127.0.0.1','uplink_port':6464,
+                  'story_enabled':True}
         phase=os.environ.get('GIZMO_CONFIG_QA_PHASE','save')
         def finish_config_qa():
             report['checks']['window_closed']=not window.isVisible()
@@ -1199,6 +1300,7 @@ def run_gui(screenshot=None, qa_report=None, config_qa_report=None):
                     for key,value in expected.items():
                         if key in window.settings_fields:window.settings_fields[key].setValue(value)
                     window.uplink_enabled.setChecked(True)
+                    window.story_enabled.setChecked(True)
                     window.uplink_host.setText(expected['uplink_host'])
                     window.uplink_port.setValue(expected['uplink_port'])
                     window.save_settings()
@@ -1206,6 +1308,7 @@ def run_gui(screenshot=None, qa_report=None, config_qa_report=None):
                 for key,value in expected.items():
                     report['checks'][key]=actual.get(key)==value
                 report['checks']['settings_visible']=window.uplink_enabled.isChecked() and window.uplink_host.text()==expected['uplink_host']
+                report['checks']['story_setting_visible']=window.story_enabled.isChecked()
                 report['checks']['unknown_setting_preserved']=actual.get('synthetic_extra')=='keep-me'
                 report['checks']['model_preserved']=actual.get('model')=='synthetic-model'
                 report['checks']['profile_preserved']=(private_dir()/'GIZMO_Awakening_V2_EN.txt').read_bytes()==b'Synthetic QA profile'

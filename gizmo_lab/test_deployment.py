@@ -31,6 +31,7 @@ class DeploymentTest(unittest.TestCase):
         source=base/'source'
         source.mkdir()
         for name in deploy.FILES:
+            (source/name).parent.mkdir(parents=True,exist_ok=True)
             shutil.copyfile(SOURCE/name,source/name)
         (source/'version.py').write_text(f"VERSION = '{version}'\n",encoding='utf-8')
         return source
@@ -127,4 +128,4 @@ class DeploymentTest(unittest.TestCase):
             release,pointer=deploy.current_release(root)
             self.assertEqual(pointer['version'],VERSION)
             self.assertEqual(len(list((root/'releases').iterdir())),2)
-            self.assertEqual(set(p.name for p in release.iterdir()),set(deploy.FILES))
+            self.assertEqual({p.relative_to(release).as_posix() for p in release.rglob('*') if p.is_file()},set(deploy.FILES))

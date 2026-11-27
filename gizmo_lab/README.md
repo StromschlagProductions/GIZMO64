@@ -1,4 +1,6 @@
-# GIZMO Control Center 0.1 // LAB 0.6.0
+# GIZMO Control Center // LAB 0.8.0
+
+LAB 0.8.0 ergänzt einen optionalen, lokal persistenten [Story Director](STORY-DIRECTOR.md). Die unveränderte Narrative Library v1.1 liefert kreatives Vokabular; konkrete Abenteuer entstehen erst bei Benutzung. SETTINGS aktiviert die Funktion, `/story` startet ein unabhängiges Abenteuer und `/origin` den ausdrücklich gewählten fiktionalen Langzeitbogen. Reale Erinnerungen und Story-Wissen bleiben in getrennten SQLite-Dateien. Normale Dialoge brauchen keinen zusätzlichen Director-Aufruf. Der C64-Client 0.3.0 verwendet dieselbe LAB-Engine ohne Protokolländerung.
 
 LAB 0.6.0 ergänzt Hybrid Memory um quellgebundene Gesprächsepisoden. Themenwechsel und Sitzungsgrenzen bilden getrennte Episoden; reale, hypothetische und fiktionale Inhalte bleiben getrennt. ARCHIVE zeigt Episoden, Themen, ausdrücklich genannte Bedeutung, Quellen und Status. Episodentitel können lokal korrigiert und Episoden gelöscht werden. Details und Abnahme stehen im Repositorydokument `EPISODIC-MEMORY.md`.
 

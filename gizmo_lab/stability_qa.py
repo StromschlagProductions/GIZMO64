@@ -57,16 +57,18 @@ def main():
         deployment.git_run(GIT,'-C',repository,'config','user.name','Synthetic QA')
         deployment.git_run(GIT,'-C',repository,'config','user.email','qa@example.invalid')
         release=repository/'gizmo_lab';release.mkdir()
-        for name in deployment.FILES:shutil.copyfile(SOURCE/name,release/name)
+        for name in deployment.FILES:
+            (release/name).parent.mkdir(parents=True,exist_ok=True)
+            shutil.copyfile(SOURCE/name,release/name)
         version_file=release/'version.py'
         version_file.write_text(re.sub(r"(?m)^VERSION\s*=\s*['\"][^'\"]+['\"]",
-            "VERSION = '0.7.99'",version_file.read_text(encoding='utf-8')),encoding='utf-8')
+            "VERSION = '0.8.99'",version_file.read_text(encoding='utf-8')),encoding='utf-8')
         deployment.git_run(GIT,'-C',repository,'add','gizmo_lab')
         deployment.git_run(GIT,'-C',repository,'commit','-m','Synthetic update')
-        deployment.git_run(GIT,'-C',repository,'tag','lab-v0.7.99')
+        deployment.git_run(GIT,'-C',repository,'tag','lab-v0.8.99')
         with patch.object(deployment,'REPOSITORY',str(repository)):
             assert deployment.update(root)
-        assert deployment.current_release(root)[1]['version']=='0.7.99'
+        assert deployment.current_release(root)[1]['version']=='0.8.99'
         assert (data/'config.json').read_bytes()==saved
         assert (data/'GIZMO_Awakening_V2_EN.txt').read_bytes()==profile
         assert (data/'memory.sqlite3').read_bytes()==memory

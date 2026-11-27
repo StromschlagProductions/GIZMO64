@@ -1,0 +1,62 @@
+{
+  "format": "gizmo.campaign-policy",
+  "version": "1.0.0",
+  "id": "origin_mystery",
+  "status": "policy_only_no_generated_canon",
+  "enabled": "explicit_campaign_opt_in",
+  "language": "en",
+  "fictional_premise": {
+    "approved_anchors": [
+      "The player found what appeared to be an old program associated with the player’s sister and her Schneider CPC 6128.",
+      "GIZMO now appears on the Commodore 64.",
+      "Neither the player character nor GIZMO knows its true nature, origin or purpose."
+    ],
+    "open_questions": [
+      "What is GIZMO?",
+      "Where did it originate?",
+      "What, if anything, was the sister’s fictional role?",
+      "How are the old computer, GIZMO and the player connected?"
+    ],
+    "real_world_boundary": "These are fictional premises, not claims about the actual deceased sister, her data or the real hardware. Do not infer additional biography or simulate contact with the deceased. The PC and local LLM are real infrastructure outside the fiction. No actual unexplained computer behavior is evidence."
+  },
+  "init": {
+    "when": "once at first explicit campaign activation, not during development or normal chat",
+    "private_canon": "Generate an original, internally coherent causal foundation and scope of unresolved questions; fix foundational facts and their causes before any related clue is released. Do not require a fixed plot or final outcome. No predetermined answer in this library.",
+    "persistence": "Atomically store private campaign ID, schema and library version, seed, foundational facts, causal dependencies, open questions, evidence routes, observation channels and mutable world state; reuse on restart. No regeneration on model or prompt change.",
+    "failure": "Bounded repair once; if invalid, do not commit or reveal. Continue ordinary conversation."
+  },
+  "episode_modes": {
+    "standalone": "No origin link; allowed to close fully and have its own explanation.",
+    "resonance": "Thematic echo without claiming a causal link.",
+    "connected": "An actual connection justified by previously committed canon and traceable evidence."
+  },
+  "pacing": {
+    "default": "Most episodes standalone or thematic; true origin advances rare and optional.",
+    "rules": [
+      "No required clue per session or episode.",
+      "No real-world deadlines or events while off.",
+      "Do not repeatedly tease unresolved mysteries without progress.",
+      "Allow pause, disengagement and meaningful local endings.",
+      "No predetermined campaign duration. An earned resolution is allowed; it need not end the companion.",
+      "Evidence can support competing hypotheses; do not retcon the causal truth to fit guesses."
+    ]
+  },
+  "knowledge_boundary": {
+    "director": "Private campaign truth, episode worlds and gated evidence.",
+    "gizmo": "Only explicitly revealed observations and its own fallible hypotheses. GIZMO does not know it is a program within the fiction; factual technical questions outside fiction must be answered honestly.",
+    "player": "Only shared or individually revealed fictional observations. No secret state in ordinary GUI, logs, exported reports or prompts to GIZMO.",
+    "memory": "Discovered narrative observations and beliefs separate from real biography. No private user archive access by director. Only explicitly approved premise anchors, no private names or invented real-world claims."
+  },
+  "validation": [
+    "Campaign truth cannot be changed by episode generation or player speculation.",
+    "Each essential conclusion has independently accessible evidence routes; prevent circular dependencies.",
+    "Actual campaign connections require valid references and reveal prerequisites.",
+    "Test standalone episodes with zero origin disclosures.",
+    "Test persistence, restart, pause, scope boundaries, and no spoiler leakage.",
+    "All QA uses synthetic anchors; no generated production canon printed or committed."
+  ],
+  "rollout": {
+    "prototype": "First Adventure may remain a standalone opt-in episode; reserve campaign ID and separate campaign-state interface now.",
+    "next": "Implement private campaign initialization and at least one controlled fictional evidence route; verify standalone and connected episode modes. Use the same local model sequentially. Do not prewrite a concrete mystery for the player."
+  }
+}

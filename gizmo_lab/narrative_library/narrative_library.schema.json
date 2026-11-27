@@ -1,0 +1,419 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "format",
+    "version",
+    "language",
+    "status",
+    "axes",
+    "selection",
+    "profiles",
+    "grammar",
+    "quality_gates",
+    "runtime_contract"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "format": {
+      "const": "gizmo.narrative-library"
+    },
+    "version": {
+      "const": "1.1.0"
+    },
+    "language": {
+      "const": "en"
+    },
+    "status": {},
+    "axes": {
+      "type": "object",
+      "required": [
+        "atmosphere",
+        "drive",
+        "domain",
+        "setting",
+        "entry",
+        "explanation",
+        "character_function",
+        "evidence",
+        "obstacle",
+        "reversal",
+        "event_function",
+        "aftertaste",
+        "access_channel"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "atmosphere": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "weight",
+              "guidance"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^atmosphere\\.[a-z][a-z0-9_]*$"
+              },
+              "weight": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "guidance": {
+                "type": "string",
+                "minLength": 5,
+                "maxLength": 350
+              }
+            }
+          }
+        },
+        "drive": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "weight",
+              "guidance"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^drive\\.[a-z][a-z0-9_]*$"
+              },
+              "weight": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "guidance": {
+                "type": "string",
+                "minLength": 5,
+                "maxLength": 350
+              }
+            }
+          }
+        },
+        "domain": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "weight",
+              "guidance"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^domain\\.[a-z][a-z0-9_]*$"
+              },
+              "weight": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "guidance": {
+                "type": "string",
+                "minLength": 5,
+                "maxLength": 350
+              }
+            }
+          }
+        },
+        "setting": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "weight",
+              "guidance"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^setting\\.[a-z][a-z0-9_]*$"
+              },
+              "weight": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "guidance": {
+                "type": "string",
+                "minLength": 5,
+                "maxLength": 350
+              }
+            }
+          }
+        },
+        "entry": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "weight",
+              "guidance"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^entry\\.[a-z][a-z0-9_]*$"
+              },
+              "weight": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "guidance": {
+                "type": "string",
+                "minLength": 5,
+                "maxLength": 350
+              }
+            }
+          }
+        },
+        "explanation": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "weight",
+              "guidance"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^explanation\\.[a-z][a-z0-9_]*$"
+              },
+              "weight": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "guidance": {
+                "type": "string",
+                "minLength": 5,
+                "maxLength": 350
+              }
+            }
+          }
+        },
+        "character_function": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "weight",
+              "guidance"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^character_function\\.[a-z][a-z0-9_]*$"
+              },
+              "weight": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "guidance": {
+                "type": "string",
+                "minLength": 5,
+                "maxLength": 350
+              }
+            }
+          }
+        },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "weight",
+              "guidance"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^evidence\\.[a-z][a-z0-9_]*$"
+              },
+              "weight": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "guidance": {
+                "type": "string",
+                "minLength": 5,
+                "maxLength": 350
+              }
+            }
+          }
+        },
+        "obstacle": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "weight",
+              "guidance"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^obstacle\\.[a-z][a-z0-9_]*$"
+              },
+              "weight": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "guidance": {
+                "type": "string",
+                "minLength": 5,
+                "maxLength": 350
+              }
+            }
+          }
+        },
+        "reversal": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "weight",
+              "guidance"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^reversal\\.[a-z][a-z0-9_]*$"
+              },
+              "weight": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "guidance": {
+                "type": "string",
+                "minLength": 5,
+                "maxLength": 350
+              }
+            }
+          }
+        },
+        "event_function": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "weight",
+              "guidance"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^event_function\\.[a-z][a-z0-9_]*$"
+              },
+              "weight": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "guidance": {
+                "type": "string",
+                "minLength": 5,
+                "maxLength": 350
+              }
+            }
+          }
+        },
+        "aftertaste": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "weight",
+              "guidance"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^aftertaste\\.[a-z][a-z0-9_]*$"
+              },
+              "weight": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "guidance": {
+                "type": "string",
+                "minLength": 5,
+                "maxLength": 350
+              }
+            }
+          }
+        },
+        "access_channel": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "weight",
+              "guidance"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^access_channel\\.[a-z][a-z0-9_]*$"
+              },
+              "weight": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "guidance": {
+                "type": "string",
+                "minLength": 5,
+                "maxLength": 350
+              }
+            }
+          }
+        }
+      }
+    },
+    "selection": {},
+    "profiles": {},
+    "grammar": {},
+    "quality_gates": {},
+    "runtime_contract": {}
+  }
+}

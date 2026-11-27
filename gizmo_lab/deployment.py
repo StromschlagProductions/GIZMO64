@@ -17,7 +17,11 @@ from zipfile import ZipFile, BadZipFile
 REPOSITORY = 'https://github.com/StromschlagProductions/GIZMO64.git'
 FILES = ('gizmo_lab.py','memory.py','analysis.py','version.py','deployment.py',
          'config.example.json','personality.example.txt','questions.json','variants.example.json',
-         'README.md','LOCAL-DEVELOPMENT.md','MEMORY.md','ARCHITEKTUR-0.3.md')
+         'README.md','LOCAL-DEVELOPMENT.md','MEMORY.md','ARCHITEKTUR-0.3.md',
+         'story.py','STORY-DIRECTOR.md','narrative_library/README.md','narrative_library/REFERENZEN.md',
+         'narrative_library/director_prompt_en.txt','narrative_library/narrative_library.json',
+         'narrative_library/narrative_library.schema.json',
+         'narrative_library/origin_campaign_policy.json','narrative_library/select_dna.py')
 TAG = re.compile(r'lab-v(\d+)\.(\d+)\.(\d+)$')
 
 
@@ -92,6 +96,7 @@ def activate(root, source, revision, expected_version=None):
         staging=Path(temporary)/'app'
         staging.mkdir()
         for name in FILES:
+            (staging/name).parent.mkdir(parents=True,exist_ok=True)
             shutil.copyfile(source/name,staging/name)
         release_version(staging)
         os.replace(staging,destination)
@@ -139,6 +144,7 @@ def update(root):
                 info=bundle.getinfo('gizmo_lab/'+name)
                 if info.file_size>2_000_000:
                     raise RuntimeError('Release-Datei unerwartet groß')
+                (source/name).parent.mkdir(parents=True,exist_ok=True)
                 (source/name).write_bytes(bundle.read(info))
         version=activate(root,source,revision,expected_version=tag.removeprefix('lab-v'))
     refresh_launchers(root)

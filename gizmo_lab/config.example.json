@@ -14,6 +14,7 @@
   "keep_alive": -1,
   "think": false,
   "uplink_enabled": false,
+  "story_enabled": false,
   "uplink_host": "auto",
   "uplink_port": 6464
 }

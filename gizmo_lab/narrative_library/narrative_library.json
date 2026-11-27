@@ -1,0 +1,866 @@
+{
+  "format": "gizmo.narrative-library",
+  "version": "1.1.0",
+  "language": "en",
+  "status": "curated_seed_not_engine",
+  "axes": {
+    "atmosphere": [
+      {
+        "id": "atmosphere.wonder",
+        "weight": 1.4,
+        "guidance": "Let ordinary details acquire a sense of discovery; allow awe without danger."
+      },
+      {
+        "id": "atmosphere.warm_adventure",
+        "weight": 1.4,
+        "guidance": "Shared ingenuity, affectionate friction and the joy of exploring together."
+      },
+      {
+        "id": "atmosphere.uncanny_familiar",
+        "weight": 1.3,
+        "guidance": "A recognizable place behaves slightly differently; preserve mundane texture."
+      },
+      {
+        "id": "atmosphere.scientific_intrigue",
+        "weight": 1.3,
+        "guidance": "Curiosity driven by observations, measurement and competing explanations."
+      },
+      {
+        "id": "atmosphere.archaeological_awe",
+        "weight": 1.2,
+        "guidance": "Time depth, material traces and the humility of reconstructing lost knowledge."
+      },
+      {
+        "id": "atmosphere.gothic_dread",
+        "weight": 1.0,
+        "guidance": "Isolation, oppressive surroundings and implications rather than graphic spectacle."
+      },
+      {
+        "id": "atmosphere.psychological_unease",
+        "weight": 1.0,
+        "guidance": "Conflicting accounts, motives and subjective perception; never diagnose the real user."
+      },
+      {
+        "id": "atmosphere.absurd_comedy",
+        "weight": 1.0,
+        "guidance": "Unexpected but internally consistent logic; humor from consequence and contrast."
+      },
+      {
+        "id": "atmosphere.melancholy",
+        "weight": 0.9,
+        "guidance": "Quiet reflection on fictional change, distance or impermanence, without forced sentiment."
+      },
+      {
+        "id": "atmosphere.quiet_beauty",
+        "weight": 0.9,
+        "guidance": "A small discovery may be meaningful without a mystery or threat."
+      },
+      {
+        "id": "atmosphere.kinetic_adventure",
+        "weight": 1.0,
+        "guidance": "Practical obstacles, momentum and resourcefulness with opportunities to rest."
+      }
+    ],
+    "drive": [
+      {
+        "id": "drive.discover",
+        "weight": 1.4,
+        "guidance": "Understand something previously unnoticed."
+      },
+      {
+        "id": "drive.reconstruct",
+        "weight": 1.3,
+        "guidance": "Reconstruct an earlier fictional event from independent traces."
+      },
+      {
+        "id": "drive.explore",
+        "weight": 1.2,
+        "guidance": "Learn the layout, constraints and affordances of an unfamiliar environment."
+      },
+      {
+        "id": "drive.help",
+        "weight": 1.0,
+        "guidance": "Choose whether and how to assist a fictional figure with a concrete problem."
+      },
+      {
+        "id": "drive.verify",
+        "weight": 1.2,
+        "guidance": "Test a claim against evidence rather than trust its speaker."
+      },
+      {
+        "id": "drive.restore",
+        "weight": 1.0,
+        "guidance": "Recover the function or meaning of an object or process."
+      },
+      {
+        "id": "drive.create",
+        "weight": 0.9,
+        "guidance": "Collaborate on a small invention, interpretation or work of imagination."
+      },
+      {
+        "id": "drive.choose",
+        "weight": 0.9,
+        "guidance": "Decide between genuinely different values or outcomes."
+      },
+      {
+        "id": "drive.negotiate",
+        "weight": 0.8,
+        "guidance": "Resolve incompatible but understandable fictional goals."
+      },
+      {
+        "id": "drive.observe",
+        "weight": 0.9,
+        "guidance": "Witness a phenomenon and decide whether investigation is warranted."
+      }
+    ],
+    "domain": [
+      {
+        "id": "domain.local_history",
+        "weight": 1.2,
+        "guidance": "Ordinary community spaces, layered histories and traces of earlier uses."
+      },
+      {
+        "id": "domain.material_culture",
+        "weight": 1.2,
+        "guidance": "Craft, collections, provenance and the evidence carried by objects."
+      },
+      {
+        "id": "domain.field_science",
+        "weight": 1.2,
+        "guidance": "Observations, instruments, environments and limitations of measurement."
+      },
+      {
+        "id": "domain.archaeology",
+        "weight": 1.2,
+        "guidance": "Context, stratigraphy, documentation and ethical stewardship of fictional finds."
+      },
+      {
+        "id": "domain.psychology",
+        "weight": 1.0,
+        "guidance": "Beliefs, memory fallibility, social pressure and conflicting testimony."
+      },
+      {
+        "id": "domain.folklore",
+        "weight": 1.1,
+        "guidance": "Invented traditions, variants of stories and differences between belief and evidence."
+      },
+      {
+        "id": "domain.acoustics",
+        "weight": 1.0,
+        "guidance": "Rhythm, resonance, listening and differences in acoustic environments."
+      },
+      {
+        "id": "domain.mechanics",
+        "weight": 1.0,
+        "guidance": "Physical mechanisms, wear, material constraints and ingenious repair."
+      },
+      {
+        "id": "domain.mathematics",
+        "weight": 0.8,
+        "guidance": "Patterns, invariants and logical puzzles with observable consequences."
+      },
+      {
+        "id": "domain.art_and_language",
+        "weight": 1.0,
+        "guidance": "Meaning, symbols, translation and differing interpretations."
+      },
+      {
+        "id": "domain.landscape",
+        "weight": 1.0,
+        "guidance": "Terrain, weather and spatial relations as sources of evidence and constraints."
+      },
+      {
+        "id": "domain.retro_computing",
+        "weight": 0.8,
+        "guidance": "Fictional vintage computing artifacts, limited interfaces and historical context."
+      },
+      {
+        "id": "domain.biology",
+        "weight": 1.0,
+        "guidance": "Fictional ecosystems, behavior and unusual but coherent natural processes."
+      },
+      {
+        "id": "domain.social_history",
+        "weight": 0.9,
+        "guidance": "Institutional change, collective memory and overlooked everyday perspectives."
+      },
+      {
+        "id": "domain.cosmology",
+        "weight": 0.7,
+        "guidance": "Scale, time and the limits of observation; not automatically extraterrestrial."
+      }
+    ],
+    "setting": [
+      {
+        "id": "setting.familiar_place",
+        "weight": 1.3,
+        "guidance": "An everyday fictional environment with clear routines and spatial anchors."
+      },
+      {
+        "id": "setting.remote_landscape",
+        "weight": 1.0,
+        "guidance": "A bounded fictional region where terrain and distance matter."
+      },
+      {
+        "id": "setting.collection_space",
+        "weight": 1.0,
+        "guidance": "A fictional archive, collection or exhibition with distinct provenance."
+      },
+      {
+        "id": "setting.workshop",
+        "weight": 1.0,
+        "guidance": "A place defined by tools, objects and their uses."
+      },
+      {
+        "id": "setting.research_space",
+        "weight": 1.0,
+        "guidance": "A bounded fictional site for observation and experimentation."
+      },
+      {
+        "id": "setting.public_meeting_place",
+        "weight": 1.0,
+        "guidance": "A social setting where perspectives and motives can intersect."
+      },
+      {
+        "id": "setting.layered_site",
+        "weight": 1.1,
+        "guidance": "A location with evidence of different periods or functions."
+      },
+      {
+        "id": "setting.digital_environment",
+        "weight": 0.7,
+        "guidance": "A strictly virtual system with explicit capabilities and access rules."
+      },
+      {
+        "id": "setting.liminal_space",
+        "weight": 0.8,
+        "guidance": "A transitional environment with unusual constraints, not necessarily supernatural."
+      },
+      {
+        "id": "setting.open_landscape",
+        "weight": 0.9,
+        "guidance": "A fictional natural setting where observation and movement shape discovery."
+      }
+    ],
+    "entry": [
+      {
+        "id": "entry.ordinary_discrepancy",
+        "weight": 1.3,
+        "guidance": "Introduce a small difference from an established fictional routine."
+      },
+      {
+        "id": "entry.invitation",
+        "weight": 1.0,
+        "guidance": "A fictional contact offers an optional opportunity, not an obligation."
+      },
+      {
+        "id": "entry.observable_pattern",
+        "weight": 1.2,
+        "guidance": "A repeatable observation suggests a question worth testing."
+      },
+      {
+        "id": "entry.object_encounter",
+        "weight": 1.0,
+        "guidance": "An object presents an affordance or ambiguity that can be examined."
+      },
+      {
+        "id": "entry.conflicting_accounts",
+        "weight": 1.1,
+        "guidance": "Two limited perspectives disagree in a way that can be investigated."
+      },
+      {
+        "id": "entry.practical_problem",
+        "weight": 1.1,
+        "guidance": "A bounded task offers room for collaboration and unexpected results."
+      },
+      {
+        "id": "entry.serendipity",
+        "weight": 1.0,
+        "guidance": "A chance encounter creates an opportunity without implying destiny."
+      },
+      {
+        "id": "entry.playful_challenge",
+        "weight": 0.9,
+        "guidance": "A lighthearted problem with more than one acceptable solution."
+      },
+      {
+        "id": "entry.quiet_observation",
+        "weight": 1.0,
+        "guidance": "A small detail invites attention without necessarily starting a larger story."
+      },
+      {
+        "id": "entry.virtual_message",
+        "weight": 0.5,
+        "guidance": "An explicitly fictional communication may present an optional lead; no real network access."
+      },
+      {
+        "id": "entry.missing_context",
+        "weight": 0.9,
+        "guidance": "A piece of information lacks a useful context; seek provenance rather than presume conspiracy."
+      }
+    ],
+    "explanation": [
+      {
+        "id": "explanation.mundane",
+        "weight": 1.2,
+        "guidance": "Ordinary physical or social causes account for the events; make the explanation satisfying."
+      },
+      {
+        "id": "explanation.human_intention",
+        "weight": 1.1,
+        "guidance": "Human choices, concealment or conflicting incentives explain the central situation."
+      },
+      {
+        "id": "explanation.emergent_natural",
+        "weight": 1.1,
+        "guidance": "An unusual natural process explains apparently impossible observations."
+      },
+      {
+        "id": "explanation.technological",
+        "weight": 0.9,
+        "guidance": "A bounded fictional technology explains effects through consistent rules."
+      },
+      {
+        "id": "explanation.speculative_science",
+        "weight": 1.0,
+        "guidance": "Invent a coherent speculative mechanism with explicit limitations."
+      },
+      {
+        "id": "explanation.supernatural",
+        "weight": 1.0,
+        "guidance": "A genuinely fantastic fictional mechanism obeys stable rules and has observable effects."
+      },
+      {
+        "id": "explanation.layered",
+        "weight": 1.0,
+        "guidance": "Different causes explain different parts; define their boundaries before play."
+      },
+      {
+        "id": "explanation.open_epistemic",
+        "weight": 0.6,
+        "guidance": "Keep a fixed causal backbone while explicitly leaving a secondary question unresolved."
+      },
+      {
+        "id": "explanation.no_mystery",
+        "weight": 1.0,
+        "guidance": "No hidden causal riddle is needed; the interest lies in experience or choice."
+      }
+    ],
+    "character_function": [
+      {
+        "id": "character_function.curious_peer",
+        "weight": 1.2,
+        "guidance": "A collaborator with complementary knowledge and limitations."
+      },
+      {
+        "id": "character_function.reluctant_witness",
+        "weight": 1.0,
+        "guidance": "A figure whose hesitation has a concrete motive, not automatic guilt."
+      },
+      {
+        "id": "character_function.practical_expert",
+        "weight": 1.2,
+        "guidance": "A competent figure with a bounded area of expertise and plausible blind spots."
+      },
+      {
+        "id": "character_function.keeper_of_context",
+        "weight": 1.1,
+        "guidance": "A figure who understands part of the history or provenance but not everything."
+      },
+      {
+        "id": "character_function.competing_investigator",
+        "weight": 0.9,
+        "guidance": "A figure pursuing a different interpretation or outcome."
+      },
+      {
+        "id": "character_function.well_meaning_skeptic",
+        "weight": 1.1,
+        "guidance": "A figure who demands evidence and may change their view."
+      },
+      {
+        "id": "character_function.unreliable_observer",
+        "weight": 0.9,
+        "guidance": "A figure with limited or mistaken observations, not automatically malicious."
+      },
+      {
+        "id": "character_function.conflicted_custodian",
+        "weight": 0.9,
+        "guidance": "A figure balancing duty, loyalty and another legitimate interest."
+      },
+      {
+        "id": "character_function.unexpected_ally",
+        "weight": 1.0,
+        "guidance": "A figure whose useful ability is distinct from their apparent social role."
+      },
+      {
+        "id": "character_function.comic_counterpoint",
+        "weight": 0.8,
+        "guidance": "A figure whose priorities create gentle situational humor."
+      },
+      {
+        "id": "character_function.independent_actor",
+        "weight": 1.0,
+        "guidance": "A figure with a goal that continues within active fictional time."
+      }
+    ],
+    "evidence": [
+      {
+        "id": "evidence.material_trace",
+        "weight": 1.2,
+        "guidance": "An observable physical property supports or weakens an explanation."
+      },
+      {
+        "id": "evidence.record_comparison",
+        "weight": 1.0,
+        "guidance": "Independent records differ; the discrepancy is meaningful, not just decorative."
+      },
+      {
+        "id": "evidence.spatial_relation",
+        "weight": 1.1,
+        "guidance": "Relative position or layout constrains possible events."
+      },
+      {
+        "id": "evidence.time_relation",
+        "weight": 1.1,
+        "guidance": "Order, duration or chronology tests an account."
+      },
+      {
+        "id": "evidence.repeatable_observation",
+        "weight": 1.2,
+        "guidance": "A phenomenon can be observed again under defined conditions."
+      },
+      {
+        "id": "evidence.negative_evidence",
+        "weight": 1.0,
+        "guidance": "A missing expected trace matters only if its absence is justified."
+      },
+      {
+        "id": "evidence.limited_testimony",
+        "weight": 1.0,
+        "guidance": "A statement is evidence of what was said, not automatically of what happened."
+      },
+      {
+        "id": "evidence.provenance",
+        "weight": 1.1,
+        "guidance": "Origin, custody or context changes interpretation of an object."
+      },
+      {
+        "id": "evidence.acoustic_pattern",
+        "weight": 0.9,
+        "guidance": "A fictional sound observation can be compared, including a text description."
+      },
+      {
+        "id": "evidence.behavioral_consistency",
+        "weight": 0.9,
+        "guidance": "Choices and incentives support a motive hypothesis without proving it."
+      },
+      {
+        "id": "evidence.independent_confirmation",
+        "weight": 1.2,
+        "guidance": "A separate route corroborates a key claim without circular reasoning."
+      },
+      {
+        "id": "evidence.failed_prediction",
+        "weight": 1.0,
+        "guidance": "A testable expectation fails, narrowing explanations."
+      }
+    ],
+    "obstacle": [
+      {
+        "id": "obstacle.limited_access",
+        "weight": 1.0,
+        "guidance": "Access is bounded by an understandable fictional condition with alternative paths."
+      },
+      {
+        "id": "obstacle.missing_expertise",
+        "weight": 1.0,
+        "guidance": "Information requires interpretation; a second perspective is available."
+      },
+      {
+        "id": "obstacle.competing_goals",
+        "weight": 1.1,
+        "guidance": "Two legitimate goals cannot both be fully satisfied."
+      },
+      {
+        "id": "obstacle.uncertain_measurement",
+        "weight": 1.0,
+        "guidance": "An observation has limits; another method can reduce uncertainty."
+      },
+      {
+        "id": "obstacle.resource_constraint",
+        "weight": 0.9,
+        "guidance": "A bounded fictional resource changes available actions, not real-world access."
+      },
+      {
+        "id": "obstacle.misinterpretation",
+        "weight": 1.1,
+        "guidance": "A plausible but incomplete interpretation obscures a better one."
+      },
+      {
+        "id": "obstacle.environmental_change",
+        "weight": 0.9,
+        "guidance": "A fictional setting changes through established causes during active play."
+      },
+      {
+        "id": "obstacle.trust_problem",
+        "weight": 0.9,
+        "guidance": "Disclosure requires cooperation or an alternative route."
+      },
+      {
+        "id": "obstacle.no_obstacle",
+        "weight": 1.0,
+        "guidance": "Allow an unimpeded discovery or quiet moment."
+      }
+    ],
+    "reversal": [
+      {
+        "id": "reversal.context_shift",
+        "weight": 1.2,
+        "guidance": "Previously observed evidence gains a different meaning from newly available context."
+      },
+      {
+        "id": "reversal.wrong_assumption",
+        "weight": 1.2,
+        "guidance": "A tested assumption fails; the earlier evidence remains valid."
+      },
+      {
+        "id": "reversal.motive_reframe",
+        "weight": 1.0,
+        "guidance": "A figure's behavior becomes understandable in a new light."
+      },
+      {
+        "id": "reversal.scale_shift",
+        "weight": 0.9,
+        "guidance": "The scope changes in a causal and proportional way."
+      },
+      {
+        "id": "reversal.parallel_convergence",
+        "weight": 1.0,
+        "guidance": "Independent lines of inquiry intersect through a previously established connection."
+      },
+      {
+        "id": "reversal.cost_revealed",
+        "weight": 0.9,
+        "guidance": "A choice acquires a foreseeable but previously unknown fictional cost."
+      },
+      {
+        "id": "reversal.false_alarm",
+        "weight": 0.9,
+        "guidance": "A concern proves ordinary without ridiculing the investigators."
+      },
+      {
+        "id": "reversal.no_reversal",
+        "weight": 1.0,
+        "guidance": "A straightforward discovery or emotional conclusion is sufficient."
+      }
+    ],
+    "event_function": [
+      {
+        "id": "event_function.discovery",
+        "weight": 1.2,
+        "guidance": "Reveal a permitted observation that adds information or opportunity."
+      },
+      {
+        "id": "event_function.anomaly",
+        "weight": 1.0,
+        "guidance": "Introduce a justified discrepancy without declaring its cause."
+      },
+      {
+        "id": "event_function.encounter",
+        "weight": 1.0,
+        "guidance": "Let a figure act from their own goal and knowledge."
+      },
+      {
+        "id": "event_function.experiment",
+        "weight": 1.0,
+        "guidance": "Resolve a valid test against established rules."
+      },
+      {
+        "id": "event_function.complication",
+        "weight": 0.9,
+        "guidance": "Apply an earned consequence to the mutable state."
+      },
+      {
+        "id": "event_function.dilemma",
+        "weight": 0.9,
+        "guidance": "Present distinct choices and material tradeoffs without forced menus."
+      },
+      {
+        "id": "event_function.revelation",
+        "weight": 0.9,
+        "guidance": "Reveal only established facts whose conditions are met."
+      },
+      {
+        "id": "event_function.comic_relief",
+        "weight": 0.9,
+        "guidance": "Release tension through a plausible contrast, not a compulsory joke."
+      },
+      {
+        "id": "event_function.quiet_moment",
+        "weight": 1.1,
+        "guidance": "Allow space for thought or appreciation without new plot obligations."
+      },
+      {
+        "id": "event_function.resolution",
+        "weight": 1.0,
+        "guidance": "Close a goal through actual decisions and evidence."
+      },
+      {
+        "id": "event_function.afterglow",
+        "weight": 1.0,
+        "guidance": "Reflect on what happened without reciting or adding unearned facts."
+      }
+    ],
+    "aftertaste": [
+      {
+        "id": "aftertaste.wonder",
+        "weight": 1.2,
+        "guidance": "Leave a sense of a larger fictional world without compulsory sequel bait."
+      },
+      {
+        "id": "aftertaste.understanding",
+        "weight": 1.2,
+        "guidance": "The participants understand more than before."
+      },
+      {
+        "id": "aftertaste.relief",
+        "weight": 1.0,
+        "guidance": "A credible difficulty ends and ordinary life resumes."
+      },
+      {
+        "id": "aftertaste.bittersweet",
+        "weight": 0.9,
+        "guidance": "A gain comes with a meaningful, non-manipulative fictional cost."
+      },
+      {
+        "id": "aftertaste.amusement",
+        "weight": 1.0,
+        "guidance": "The experience ends with warmth or an unexpected comic consequence."
+      },
+      {
+        "id": "aftertaste.quiet_uncertainty",
+        "weight": 0.8,
+        "guidance": "A bounded secondary question remains open intentionally."
+      },
+      {
+        "id": "aftertaste.satisfaction",
+        "weight": 1.0,
+        "guidance": "A practical or creative goal is accomplished."
+      }
+    ],
+    "access_channel": [
+      {
+        "id": "access_channel.guided_observation",
+        "weight": 1.4,
+        "guidance": "GIZMO can relay an authorized fictional observation or description."
+      },
+      {
+        "id": "access_channel.virtual_object",
+        "weight": 1.2,
+        "guidance": "An authorized object can be examined or manipulated through the fictional engine."
+      },
+      {
+        "id": "access_channel.fictional_contact",
+        "weight": 1.0,
+        "guidance": "A virtual character can be contacted only through an established simulated channel."
+      },
+      {
+        "id": "access_channel.fictional_record",
+        "weight": 0.9,
+        "guidance": "An authorized virtual record can be retrieved and reread without inventing new data."
+      },
+      {
+        "id": "access_channel.modelled_experiment",
+        "weight": 1.0,
+        "guidance": "A simulated test yields results derived from fictional rules."
+      },
+      {
+        "id": "access_channel.shared_imagination",
+        "weight": 1.0,
+        "guidance": "The participants explicitly enter a fictional scenario without claiming physical travel."
+      },
+      {
+        "id": "access_channel.conversation_only",
+        "weight": 1.1,
+        "guidance": "The experience works through ordinary conversation and no new external capability."
+      }
+    ]
+  },
+  "selection": {
+    "initial_required_axes": [
+      "atmosphere",
+      "drive",
+      "domain",
+      "setting",
+      "entry",
+      "explanation",
+      "access_channel",
+      "aftertaste"
+    ],
+    "initial_optional_axes": {
+      "character_function": 2,
+      "evidence": 2,
+      "obstacle": 1,
+      "reversal": 1
+    },
+    "event_axis": "event_function",
+    "max_guidance_items": 14,
+    "max_guidance_chars": 2400,
+    "weights": "Relative, editable design defaults, not measured probabilities. No fixed source-author weighting.",
+    "novelty": {
+      "history_size": 8,
+      "recent_full_signature_forbidden": true,
+      "recency_multiplier": 0.55,
+      "floor_multiplier": 0.18,
+      "penalize_axes": [
+        "entry",
+        "explanation",
+        "domain",
+        "setting"
+      ],
+      "max_selection_attempts": 12
+    },
+    "constraints": [
+      {
+        "id": "non_mystery",
+        "if": {
+          "explanation": "explanation.no_mystery"
+        },
+        "exclude": {
+          "drive": [
+            "drive.reconstruct",
+            "drive.verify"
+          ],
+          "entry": [
+            "entry.conflicting_accounts",
+            "entry.missing_context"
+          ],
+          "reversal": [
+            "reversal.context_shift",
+            "reversal.wrong_assumption",
+            "reversal.parallel_convergence",
+            "reversal.motive_reframe"
+          ]
+        },
+        "required_evidence_count": 0
+      },
+      {
+        "id": "open_question",
+        "if": {
+          "explanation": "explanation.open_epistemic"
+        },
+        "require": "Fix primary causal truth; only a secondary question may be left unresolved."
+      },
+      {
+        "id": "fictional_access",
+        "require": "All channels are simulated and must be established in world state before use. Never infer actual internet or file access."
+      }
+    ]
+  },
+  "profiles": {
+    "micro": {
+      "max_npcs": 1,
+      "max_initial_facts": 4,
+      "max_clues": 3,
+      "max_turns_soft": 8
+    },
+    "short": {
+      "max_npcs": 3,
+      "max_initial_facts": 8,
+      "max_clues": 6,
+      "max_turns_soft": 24
+    },
+    "extended": {
+      "enabled_in_first_prototype": false
+    }
+  },
+  "grammar": [
+    {
+      "id": "G01",
+      "rule": "Generate a bounded original world, not a synopsis or fixed ending. Establish immutable initial facts and mutable conditions separately."
+    },
+    {
+      "id": "G02",
+      "rule": "For a mystery, choose a private explanation at initialization; rational and fantastic possibilities may appear plausible, but a user guess cannot rewrite truth."
+    },
+    {
+      "id": "G03",
+      "rule": "Give each central conclusion at least two independently accessible evidence routes; check prerequisites and avoid circular clue dependencies."
+    },
+    {
+      "id": "G04",
+      "rule": "Separate world truth, character beliefs, testimony, and observations. An NPC may be mistaken or dishonest without changing canon."
+    },
+    {
+      "id": "G05",
+      "rule": "A reversal must follow from earlier facts or valid new evidence, not a retroactive invention. No twist is compulsory."
+    },
+    {
+      "id": "G06",
+      "rule": "Actions change only validated mutable state. Preserve meaningful alternatives and consequences; failure may change direction rather than halt play."
+    },
+    {
+      "id": "G07",
+      "rule": "Ordinary conversation is valid. Pause on request; no unsolicited event during serious personal topics or active typing. No offline activity claims."
+    },
+    {
+      "id": "G08",
+      "rule": "GIZMO is a limited companion, never the hidden narrator. Give it only observations and beliefs it is entitled to know."
+    },
+    {
+      "id": "G09",
+      "rule": "Use concise, screen-friendly observations and dialogue. Reveal through actions and concrete details rather than exposition; no forced choices or perpetual cliffhangers."
+    },
+    {
+      "id": "G10",
+      "rule": "Do not make every story about GIZMO’s origin. Standalone stories and thematic echoes are valid; any causal connection to the origin campaign must be validated against its persistent private canon. Campaign activation is separate and optional."
+    },
+    {
+      "id": "G11",
+      "rule": "No private data, bereavement, actual system errors or unapproved biography as fictional evidence. Only explicitly approved fictional campaign anchors may refer to the player’s sister and historical computer; never simulate contact with deceased people or present invented real biography as fact."
+    },
+    {
+      "id": "G12",
+      "rule": "Do not reuse recognizable source plots, characters, signature objects, names, dialogue, settings or sequences. Combine abstract functions into original material."
+    },
+    {
+      "id": "G13",
+      "rule": "The terminal is the experience interface, not a real-world capability. Establish any fictional observation channel before it can convey an event."
+    },
+    {
+      "id": "G14",
+      "rule": "Let emotional and comic experiences conclude without requiring a danger, villain, enigma or twist."
+    },
+    {
+      "id": "G15",
+      "rule": "Cinematic effects are optional future presentation hints, never evidence by themselves; no real error imitation or rapid flashes. Respect OFF."
+    }
+  ],
+  "quality_gates": [
+    "canon_consistency",
+    "clue_accessibility",
+    "knowledge_isolation",
+    "action_consequence",
+    "originality_review",
+    "fiction_boundary",
+    "no_real_side_effects",
+    "pause_and_exit",
+    "terminal_readability",
+    "campaign_canon_consistency",
+    "campaign_episode_independence",
+    "campaign_spoiler_isolation"
+  ],
+  "runtime_contract": {
+    "director_only": true,
+    "source_notes_in_prompt": false,
+    "max_repair_attempts": 1,
+    "private_state": "local_persistent",
+    "public_state": "explicitly_revealed_only",
+    "ordinary_dialog_director_calls": 0,
+    "first_prototype": "explicit_opt_in_micro_or_short",
+    "user_language": "English default; German accepted",
+    "model": "existing local model, sequential calls",
+    "no_prebuilt_adventures": true,
+    "campaign_policy_file": "origin_campaign_policy.json"
+  }
+}

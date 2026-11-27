@@ -1,8 +1,10 @@
 # GIZMO-64
 
-## Aktuell: LAB 0.7.1 / C64-Client 0.3.0
+## Aktuell: LAB 0.8.0 / C64-Client 0.3.0
 
-Der auf C64 Ultimate optisch und ergonomisch abgenommene Zeichensatzclient 0.3.0 liegt als `GIZMO64.PRG` und `GIZMO64-v0.3.0.zip` vor. [Freigabebefund](docs/C64-0.3.0-RELEASE.md) und [Kurzanleitung](docs/kurzanleitung-0.3.0.md) unterscheiden bestätigte Hardwarefunktionen von noch offenen Prüfungen. Der vorherige Stand 0.2.3 bleibt als Rückfallpaket und Git-Tag erhalten. Die PC-Version bleibt LAB 0.7.1.
+LAB 0.8.0 ergänzt den optionalen [Story Director](gizmo_lab/STORY-DIRECTOR.md) mit eigener fiktionaler SQLite-Welt. Der C64-Client 0.3.0 und seine Kommunikation bleiben unverändert.
+
+Der auf C64 Ultimate optisch und ergonomisch abgenommene Zeichensatzclient 0.3.0 liegt als `GIZMO64.PRG` und `GIZMO64-v0.3.0.zip` vor. [Freigabebefund](docs/C64-0.3.0-RELEASE.md) und [Kurzanleitung](docs/kurzanleitung-0.3.0.md) unterscheiden bestätigte Hardwarefunktionen von noch offenen Prüfungen. Der vorherige Stand 0.2.3 bleibt als Rückfallpaket und Git-Tag erhalten.
 
 Das PC-Control-Center und der C64-Client 0.3.0 benutzen dieselbe LAB-Engine, dasselbe Modell, Persönlichkeitsprofil und lokale Gedächtnisdatenbank. `GIZMO.cmd` startet das Control Center; der C64-Uplink wird unter SETTINGS aktiviert und startet mit START CORE. Der alte eigenständige Bridge-Starter startet keine zweite Engine mehr. [Freigabebefund 0.3.0](docs/C64-0.3.0-RELEASE.md) beschreibt die neue Oberfläche und die Grenzen der Ultimate-Prüfung. Die folgenden Abschnitte dokumentieren ältere C64-Versionen und deren damalige Bridge.
 
