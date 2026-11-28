@@ -15,8 +15,9 @@ import uuid
 from zipfile import ZipFile, BadZipFile
 
 REPOSITORY = 'https://github.com/StromschlagProductions/GIZMO64.git'
-FILES = ('gizmo_lab.py','memory.py','analysis.py','version.py','deployment.py',
+FILES = ('gizmo_lab.py','memory.py','analysis.py','version.py','deployment.py','character.py',
          'config.example.json','personality.example.txt','questions.json','variants.example.json','story_lite.py',
+         'character_library/GIZMO_Awakening_V3_EN.txt','character_library/character_library_en.json',
          'README.md','LOCAL-DEVELOPMENT.md','MEMORY.md','ARCHITEKTUR-0.3.md',
          'story.py','STORY-DIRECTOR.md','narrative_library/README.md','narrative_library/REFERENZEN.md',
          'narrative_library/director_prompt_en.txt','narrative_library/narrative_library.json',

@@ -18,6 +18,7 @@ from pathlib import Path
 from memory import Memory, utc_now, assemble_context, ContextBudgetError
 from analysis import Analyzer
 from version import VERSION
+from character import CharacterExamples, PROFILE_LABELS, PROFILE_MODES, profile_source
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_MODEL = 'gemma4:12b'
@@ -247,22 +248,8 @@ class Lab:
     def __init__(self, config=None, data=None, opener=None, runner=None, personality_file=None):
         self.data = Path(data) if data else private_dir()
         self.config = config or load_config(self.data)
-        expected = Path(personality_file) if personality_file else self.data / 'GIZMO_Awakening_V2_EN.txt'
-        if personality_file and not expected.is_file():
-            raise FileNotFoundError(f'Persoenlichkeitsprofil fehlt: {expected}')
-        if expected.is_file():
-            personality=expected
-            self.personality_warning=None
-        elif (self.data/'personality.txt').is_file():
-            personality=self.data/'personality.txt'
-            self.personality_warning=f'Englisches Profil fehlt: {expected}. Aktiv: {personality}.'
-        else:
-            personality=ROOT/'personality.example.txt'
-            self.personality_warning=f'Persönlichkeitsprofil fehlt: {expected}. Nur mitgelieferte Standardpersönlichkeit aktiv: {personality}.'
-        self.personality = personality.read_text(encoding='utf-8')
-        self.personality_path = personality.resolve()
-        self.expected_personality_path = expected.resolve()
-        self.profile_sha256 = hashlib.sha256(self.personality.encode('utf-8')).hexdigest()
+        self.personality_file_override=personality_file
+        self.set_personality(self.config,personality_file)
         self.opener = opener or urllib.request.urlopen
         self.runner = runner or subprocess.run
         self.stop_event = threading.Event()
@@ -289,6 +276,20 @@ class Lab:
         self.last_diagnostics = {}
         self.model = None
         self.preload_s = None
+
+    def set_personality(self, config, explicit=None):
+        mode,path=profile_source(self.data,config,explicit)
+        if not path.is_file():
+            raise FileNotFoundError(f'Persönlichkeitsprofil fehlt: {path}')
+        content=path.read_text(encoding='utf-8')
+        selector=CharacterExamples() if mode=='v3_examples' else None
+        self.personality=content
+        self.personality_path=path.resolve()
+        self.expected_personality_path=self.personality_path
+        self.personality_variant=mode
+        self.character_examples=selector
+        self.personality_warning=None
+        self.profile_sha256=hashlib.sha256(content.encode('utf-8')).hexdigest()
 
     def request(self, endpoint, payload=None, timeout=5):
         url = self.config.get('ollama_url', 'http://localhost:11434').rstrip('/') + endpoint
@@ -622,19 +623,22 @@ class Lab:
         elapsed_since_previous = (datetime.fromisoformat(utc_now()) - datetime.fromisoformat(self.previous_message_at)).total_seconds() if self.previous_message_at else None
         clock = f"Aktuelle UTC-Zeit: {utc_now()}. Sitzungsbeginn: {self.session_started}. Letzte Nachricht vor Sitzungsbeginn: {self.previous_message_at or 'keine'}. Vergangene Sekunden seitdem: {elapsed_since_previous if elapsed_since_previous is not None else 'unbekannt'}. Behaupte keine Aktivitaeten waehrend ausgeschalteter Sitzungen."
         context_started=time.perf_counter()
+        personality=self.personality
+        if context is None and self.character_examples:
+            personality+=self.character_examples.supplement(prompt)
         try:
             history=self.memory.dialog_history(self.conversation_id) if context is None else list(context)
             retrieve=self.memory.retrieve if context is None else lambda *_:([],0)
             budget_config=self.config if context_window is None else {**self.config,'num_ctx':context_window}
             try:
-                messages,retrieved,budget=assemble_context(self.personality,clock,prompt,history,retrieve,budget_config)
+                messages,retrieved,budget=assemble_context(personality,clock,prompt,history,retrieve,budget_config)
             except ContextBudgetError:
                 if context_window is None or int(self.config.get('num_ctx') or 8192)<=context_window:
                     raise
                 # Keep the full personal profile if the shared fast runner is
                 # too small. The configured window remains the safe fallback.
                 context_window=None
-                messages,retrieved,budget=assemble_context(self.personality,clock,prompt,history,retrieve,self.config)
+                messages,retrieved,budget=assemble_context(personality,clock,prompt,history,retrieve,self.config)
         except Exception:
             if self.analyzer: self.analyzer.resume()
             raise
@@ -993,6 +997,9 @@ def run_gui(screenshot=None, qa_report=None, config_qa_report=None):
                 spin=QSpinBox();spin.setRange(minimum,maximum);self.settings_fields[key]=spin;form.addRow(key.upper(),spin)
             self.settings_fields['seed'].setMinimum(-1)
             self.settings_fields['seed'].setSpecialValueText('AUTO')
+            self.profile_mode=QComboBox()
+            for mode in PROFILE_MODES:self.profile_mode.addItem(PROFILE_LABELS[mode],mode)
+            form.addRow('PERSONALITY',self.profile_mode)
             layout.addLayout(form);self.profile_path=self.label('ACTIVE PROFILE // CORE OFFLINE','dim')
             self.profile_path.setWordWrap(True);self.profile_path.setTextInteractionFlags(Qt.TextSelectableByMouse)
             layout.addWidget(self.profile_path)
@@ -1007,7 +1014,7 @@ def run_gui(screenshot=None, qa_report=None, config_qa_report=None):
             self.uplink_host=QLineEdit();self.uplink_host.setPlaceholderText('auto (private LAN address)')
             form.addRow('UPLINK HOST',self.uplink_host)
             self.uplink_port=QSpinBox();self.uplink_port.setRange(1,65535);form.addRow('UPLINK PORT',self.uplink_port)
-            profile_button=QPushButton('SELECT PERSONALITY FILE…');profile_button.clicked.connect(self.select_profile);layout.addWidget(profile_button)
+            profile_button=QPushButton('SELECT CUSTOM PERSONALITY FILE…');profile_button.clicked.connect(self.select_profile);layout.addWidget(profile_button)
             save=QPushButton('SAVE SETTINGS');save.clicked.connect(self.save_settings);layout.addWidget(save);layout.addStretch()
             layout.addWidget(self.label('Saved locally. Changes to model parameters take effect on the next request.','dim'))
             self.service_info=self.label('SERVICE // MODEL —  COMMIT '+running_revision(),'dim')
@@ -1180,21 +1187,28 @@ def run_gui(screenshot=None, qa_report=None, config_qa_report=None):
             self.story_enabled.setEnabled(not bool(config.get('lean_core_enabled',False)))
             self.uplink_host.setText(str(config.get('uplink_host','auto')))
             self.uplink_port.setValue(int(config.get('uplink_port',6464)))
+            self.profile_mode.setCurrentIndex(max(0,self.profile_mode.findData(config.get('personality_variant','v3_examples'))))
             self.show_profile()
             self.pages.setCurrentIndex(2)
         def show_profile(self):
             if not self.lab:
-                self.profile_path.setText('ACTIVE PROFILE // CORE OFFLINE')
-                self.profile_warning.setText('')
+                try:
+                    mode,path=profile_source(private_dir(),self.saved_config)
+                    self.profile_path.setText('CONFIGURED PROFILE // '+PROFILE_LABELS[mode]+'\n'+str(path))
+                    self.profile_warning.setText('WARNING // Persönlichkeitsprofil fehlt: '+str(path) if not path.is_file() else '')
+                except ValueError as error:
+                    self.profile_path.setText('CONFIGURED PROFILE // INVALID')
+                    self.profile_warning.setText('WARNING // '+str(error))
                 return
             path=self.lab.personality_path
-            self.profile_path.setText('ACTIVE PROFILE // '+path.name+'\n'+str(path))
+            self.profile_path.setText('ACTIVE PROFILE // '+PROFILE_LABELS[self.lab.personality_variant]+'\n'+str(path))
             self.profile_warning.setText('WARNING // '+self.lab.personality_warning if self.lab.personality_warning else '')
         def select_profile(self):
-            if not self.lab:
-                QMessageBox.information(self,'GIZMO','Start the core before selecting a personality file.');return
             filename,_=QFileDialog.getOpenFileName(self,'Select local personality profile','','Text files (*.txt);;All files (*)')
-            if filename:self.selected_profile=filename;self.profile_path.setText('Selected: '+Path(filename).name)
+            if filename:
+                self.selected_profile=filename
+                self.profile_mode.setCurrentIndex(self.profile_mode.findData('custom'))
+                self.profile_path.setText('SELECTED CUSTOM PROFILE // '+str(Path(filename)))
         def save_settings(self):
             if self.busy:return
             config=dict(self.lab.config if self.lab else self.saved_config)
@@ -1203,26 +1217,20 @@ def run_gui(screenshot=None, qa_report=None, config_qa_report=None):
             config['story_enabled']=self.story_enabled.isChecked()
             config['uplink_host']=self.uplink_host.text().strip() or 'auto'
             config['uplink_port']=self.uplink_port.value()
+            config['personality_variant']=self.profile_mode.currentData()
+            if getattr(self,'selected_profile',None):
+                config['personality_path']=str(Path(self.selected_profile).resolve())
+            try:
+                mode,path=profile_source(self.lab.data if self.lab else private_dir(),config)
+                if not path.is_file():raise FileNotFoundError(f'Persönlichkeitsprofil fehlt: {path}')
+                path.read_text(encoding='utf-8')
+                if mode=='v3_examples':CharacterExamples()
+            except (OSError,ValueError,KeyError) as error:
+                QMessageBox.warning(self,'Personality profile unavailable',str(error));return
             if config['uplink_enabled'] and config['uplink_host']!='auto':
                 try:uplink_bind_host(config['uplink_host'])
                 except (OSError,ValueError,RuntimeError) as error:
                     QMessageBox.warning(self,'Uplink configuration',str(error));return
-            if self.lab and getattr(self,'selected_profile',None):
-                if QMessageBox.question(self,'Confirm profile change','Replace the active local personality profile with the selected file?')!=QMessageBox.Yes:return
-                source=Path(self.selected_profile);content=source.read_text(encoding='utf-8')
-                target=self.lab.personality_path
-                if not target.is_relative_to(self.lab.data.resolve()):
-                    target=self.lab.data/'personality.txt'
-                if target.exists():
-                    import shutil
-                    shutil.copy2(target,target.with_name(target.name+'.'+datetime.now().strftime('%Y%m%d-%H%M%S')+'.bak'))
-                target.write_text(content,encoding='utf-8')
-                self.lab.personality=content;self.lab.personality_path=target.resolve()
-                self.lab.personality_warning=(f'Englisches Profil fehlt: {self.lab.expected_personality_path}. Aktiv: {target}.'
-                    if not self.lab.expected_personality_path.is_file() and target!=self.lab.expected_personality_path else None)
-                self.lab.profile_sha256=hashlib.sha256(self.lab.personality.encode()).hexdigest()
-                self.selected_profile=None
-                self.show_profile()
             try:self.persist_config(config)
             except OSError as error:
                 QMessageBox.warning(self,'Settings could not be saved',str(error));return
@@ -1237,12 +1245,20 @@ def run_gui(screenshot=None, qa_report=None, config_qa_report=None):
                     self.persist_config(previous_config)
                     self.saved_config=previous_config
                     QMessageBox.warning(self,'Story Director unavailable',str(error));return
+                try:self.lab.set_personality(config)
+                except (OSError,ValueError) as error:
+                    self.lab.config=previous_config
+                    self.persist_config(previous_config)
+                    self.saved_config=previous_config
+                    QMessageBox.warning(self,'Personality profile unavailable',str(error));return
                 if not config['uplink_enabled']:self.lab.stop_uplink()
                 else:
                     try:bind_host=uplink_bind_host(config['uplink_host'])
                     except (OSError,ValueError,RuntimeError):bind_host=None
                     if not prior or prior['host']!=bind_host or prior['port']!=config['uplink_port'] or prior['state']=='error':
                         self.lab.stop_uplink();self.lab.start_uplink()
+            self.selected_profile=None
+            self.show_profile()
             self.log_line('SETTINGS SAVED LOCALLY');self.refresh_status()
         def persist_config(self,config):
             data=self.lab.data if self.lab else private_dir()
@@ -1388,8 +1404,11 @@ def run_gui(screenshot=None, qa_report=None, config_qa_report=None):
             self.header_version.setText('STROMSCHLAG SYSTEMS // LAB '+version)
             self.footer_version.setText('GIZMO CONTROL CENTER // LAB '+version)
             model=self.lab.model if active else (self.lab.config if self.lab else self.saved_config).get('model',DEFAULT_MODEL)
-            self.service_info.setText('SERVICE // MODEL '+str(model)+('' if active else ' (CONFIGURED)')+
-                                      '  COMMIT '+running_revision())
+            mode=self.lab.personality_variant if self.lab else self.saved_config.get('personality_variant','v3_examples')
+            try:profile=self.lab.personality_path.name if self.lab else profile_source(private_dir(),self.saved_config)[1].name
+            except ValueError:profile='UNAVAILABLE'
+            self.service_info.setText('SERVICE // LAB '+version+'  MODEL '+str(model)+('' if active else ' (CONFIGURED)')+
+                                      '  PROFILE '+PROFILE_LABELS.get(mode,mode)+' ('+profile+')  COMMIT '+running_revision())
             self.indicators['core'].setText('ONLINE' if active else ('STARTING' if self.busy and self.lab else 'OFFLINE'))
             self.indicators['ollama'].setText('CONNECTED' if self.lab and self.lab.ollama_ready else ('AVAILABLE' if self.external_ollama else 'OFFLINE'))
             self.indicators['model'].setText(self.lab.model if active else 'NOT LOADED')

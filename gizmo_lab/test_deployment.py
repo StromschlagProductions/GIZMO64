@@ -16,13 +16,11 @@ GIT=shutil.which('git') or str(SOURCE.parent/'.local-tools/git/cmd/git.exe')
 
 
 class DeploymentTest(unittest.TestCase):
-    def test_runtime_imports_with_the_fixed_v031_update_manifest(self):
-        legacy_files=('gizmo_lab.py','memory.py','analysis.py','version.py','deployment.py',
-            'config.example.json','personality.example.txt','questions.json','variants.example.json',
-            'README.md','LOCAL-DEVELOPMENT.md','MEMORY.md','ARCHITEKTUR-0.3.md')
+    def test_runtime_imports_with_the_current_release_manifest(self):
         with tempfile.TemporaryDirectory() as temporary:
             staging=Path(temporary)
-            for name in legacy_files:
+            for name in deploy.FILES:
+                (staging/name).parent.mkdir(parents=True,exist_ok=True)
                 shutil.copyfile(SOURCE/name,staging/name)
             code='import sys;sys.path.insert(0,sys.argv[1]);import gizmo_lab,memory,analysis;assert gizmo_lab.VERSION==sys.argv[2]'
             subprocess.run([sys.executable,'-c',code,str(staging),VERSION],check=True,capture_output=True,timeout=15)

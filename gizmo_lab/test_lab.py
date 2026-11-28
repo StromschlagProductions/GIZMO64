@@ -3,7 +3,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from gizmo_lab import Lab, run_benchmark, should_quit, DEFAULT_MODEL
+from gizmo_lab import Lab, load_config, run_benchmark, should_quit, DEFAULT_MODEL
 
 class LabTest(unittest.TestCase):
     def test_full_synthetic_awakening_profile_is_first_system_message(self):
@@ -16,7 +16,8 @@ class LabTest(unittest.TestCase):
             def opener(request,timeout):
                 payloads.append(json.loads(request.data))
                 return io.BytesIO(b'{"message":{"content":"Hello."}}\n{"done":true}\n')
-            lab=Lab(data=data,opener=opener)
+            config=load_config(data);config['personality_variant']='v2'
+            lab=Lab(data=data,config=config,opener=opener)
             try:
                 self.assertIsNone(lab.personality_warning)
                 self.assertEqual(lab.personality_path,path.resolve())
@@ -27,16 +28,12 @@ class LabTest(unittest.TestCase):
             finally:
                 lab.memory.close()
 
-    def test_missing_profile_reports_actual_fallback_path(self):
+    def test_missing_selected_profile_is_reported_instead_of_silent_fallback(self):
         with tempfile.TemporaryDirectory() as folder:
             data=Path(folder)
-            lab=Lab(data=data)
-            try:
-                self.assertEqual(lab.personality_path,(Path(__file__).resolve().parent/'personality.example.txt').resolve())
-                self.assertIn('GIZMO_Awakening_V2_EN.txt',lab.personality_warning)
-                self.assertIn(str(lab.personality_path),lab.personality_warning)
-            finally:
-                lab.memory.close()
+            config=load_config(data);config['personality_variant']='v2'
+            with self.assertRaisesRegex(FileNotFoundError,'GIZMO_Awakening_V2_EN.txt'):
+                Lab(data=data,config=config)
 
     def test_lean_chat_keeps_full_profile_and_pauses_story_without_deleting_it(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -51,7 +48,8 @@ class LabTest(unittest.TestCase):
                 seen.append(json.loads(request.data))
                 return io.BytesIO(b'{"message":{"content":"Hello."}}\n{"done":true}\n')
             config={'model':'synthetic','story_enabled':True,'lean_core_enabled':True,
-                    'num_ctx':8192,'num_predict':256,'memory_token_budget':450}
+                    'num_ctx':8192,'num_predict':256,'memory_token_budget':450,
+                    'personality_variant':'v2'}
             lab=Lab(data=data,config=config,opener=opener)
             try:
                 self.assertIsNone(lab.story)

@@ -24,6 +24,8 @@ PySide6 liegt projektlokal in `.venv` und wird mit `.venv/Scripts/python.exe -m 
 
 Ab LAB 0.9.2 gehört die Versionsanzeige zur Release-Abnahme: Die zwei Kennungen im Control Center müssen die `VERSION` der gestarteten Engine anzeigen. SETTINGS zeigt im Servicebereich das konfigurierte beziehungsweise aktive Modell und den kurzen Commit des tatsächlich gestarteten Release-Verzeichnisses. Bei jedem künftigen LAB-Tag sind Versionsdatei, Tag und Installationszeiger sowie Anzeige nach Update und Rollback mit einer synthetischen Installation zu prüfen. Ältere Releases vor 0.9.2 behalten bei einem Rollback ihre damalige statische Beschriftung.
 
+LAB 0.9.3 ergänzt in SETTINGS die Profilwahl `V3 + situational examples` (Standard), `V3 without dynamic examples`, `V2 original` und den bestehenden eigenen Dateipfad. V3 und die Character Library 1.0 sind Release-Dateien; V2 bleibt ausschließlich am privaten Datenort. Die Auswahl wird in der privaten Konfiguration gespeichert und nach Updates wieder geladen. Die Beispiele sind auf zwei pro normaler Eingabe begrenzt, werden ohne Modellaufruf bestimmt und sind keine Fakten oder Story-Ereignisse. Der Servicebereich zeigt zusätzlich LAB-Version und tatsächlich gewähltes Profil. Ein Wechsel schreibt keine Profildatei um.
+
 Die einmalige lokale Installation (Git-Pfad bei Bedarf anpassen):
 
 ```powershell
