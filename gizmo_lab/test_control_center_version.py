@@ -24,7 +24,10 @@ class ControlCenterVersionTest(unittest.TestCase):
                     window.open_settings()
                     self.assertIn('MODEL '+gizmo_lab.DEFAULT_MODEL,window.service_info.text())
                     self.assertIn('LAB '+gizmo_lab.VERSION,window.service_info.text())
-                    self.assertIn('PROFILE V3 + situational examples',window.service_info.text())
+                    self.assertIn('PROFILE V4 fixed examples',window.service_info.text())
+                    window.profile_mode.setCurrentIndex(window.profile_mode.findData('v3_examples'))
+                    window.save_settings()
+                    self.assertEqual(gizmo_lab.load_config(Path(temporary))['personality_variant'],'v3_examples')
                     original=Path(temporary)/'GIZMO_Awakening_V2_EN.txt'
                     original.write_text('Synthetic original personality',encoding='utf-8')
                     before=original.read_bytes()

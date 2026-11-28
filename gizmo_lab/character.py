@@ -6,8 +6,10 @@ import re
 
 LIBRARY = Path(__file__).resolve().parent/'character_library'/'character_library_en.json'
 PROFILE_V3 = Path(__file__).resolve().parent/'character_library'/'GIZMO_Awakening_V3_EN.txt'
-PROFILE_MODES = ('v3_examples', 'v3', 'v2', 'custom')
+PROFILE_V4 = Path(__file__).resolve().parent/'character_library'/'GIZMO_Awakening_V4_EN.txt'
+PROFILE_MODES = ('v4', 'v3_examples', 'v3', 'v2', 'custom')
 PROFILE_LABELS = {
+    'v4':'V4 fixed examples',
     'v3_examples':'V3 + situational examples',
     'v3':'V3 without dynamic examples',
     'v2':'V2 original',
@@ -21,7 +23,7 @@ STOPWORDS = {'the','and','you','your','for','with','that','this','there','have',
 def profile_source(data, config, explicit=None):
     if explicit is not None:
         return 'custom',Path(explicit).expanduser()
-    mode=config.get('personality_variant','v3_examples')
+    mode=config.get('personality_variant','v4')
     if mode not in PROFILE_MODES:
         raise ValueError('Unknown personality profile: '+str(mode))
     if mode=='v2':return mode,Path(data)/'GIZMO_Awakening_V2_EN.txt'
@@ -29,7 +31,7 @@ def profile_source(data, config, explicit=None):
         location=config.get('personality_path')
         if not location:raise ValueError('Custom personality profile path is missing')
         return mode,Path(location).expanduser()
-    return mode,PROFILE_V3
+    return mode,PROFILE_V4 if mode=='v4' else PROFILE_V3
 
 
 def words(text):

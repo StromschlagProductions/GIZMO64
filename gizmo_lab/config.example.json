@@ -1,6 +1,6 @@
 {
   "model": "gemma4:12b",
-  "personality_variant": "v3_examples",
+  "personality_variant": "v4",
   "ollama_url": "http://localhost:11434",
   "temperature": 0.7,
   "top_p": 0.9,

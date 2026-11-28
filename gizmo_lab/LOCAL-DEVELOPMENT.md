@@ -26,6 +26,8 @@ Ab LAB 0.9.2 gehört die Versionsanzeige zur Release-Abnahme: Die zwei Kennungen
 
 LAB 0.9.3 ergänzt in SETTINGS die Profilwahl `V3 + situational examples` (Standard), `V3 without dynamic examples`, `V2 original` und den bestehenden eigenen Dateipfad. V3 und die Character Library 1.0 sind Release-Dateien; V2 bleibt ausschließlich am privaten Datenort. Die Auswahl wird in der privaten Konfiguration gespeichert und nach Updates wieder geladen. Die Beispiele sind auf zwei pro normaler Eingabe begrenzt, werden ohne Modellaufruf bestimmt und sind keine Fakten oder Story-Ereignisse. Der Servicebereich zeigt zusätzlich LAB-Version und tatsächlich gewähltes Profil. Ein Wechsel schreibt keine Profildatei um.
 
+LAB 0.9.4 ergänzt `V4 fixed examples` als Standard. V4 wird unverändert als Release-Datei geladen; dynamische Character-Library-Beispiele bleiben ausschließlich im separat auswählbaren V3-Modus. Alle bisherigen Profilmodi bleiben in SETTINGS erhalten. Bei bestehenden Installationen mit gespeicherter Profilwahl ist die Aktivierung von V4 ein gezielter Wechsel nur des Schlüssels `personality_variant`; übrige Konfiguration und private Profildateien bleiben unverändert.
+
 Die einmalige lokale Installation (Git-Pfad bei Bedarf anpassen):
 
 ```powershell

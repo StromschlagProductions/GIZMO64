@@ -6,7 +6,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from character import CharacterExamples, PROFILE_V3, profile_source
+from character import CharacterExamples, PROFILE_V3, PROFILE_V4, profile_source
 from gizmo_lab import Lab, load_config
 
 
@@ -18,8 +18,8 @@ class CharacterTest(unittest.TestCase):
             original.write_text('Synthetic V2 profile',encoding='utf-8')
             before=hashlib.sha256(original.read_bytes()).digest()
             config=load_config(data)
-            self.assertEqual(profile_source(data,config),('v3_examples',PROFILE_V3))
-            for mode,expected in (('v3_examples',PROFILE_V3),('v3',PROFILE_V3),('v2',original)):
+            self.assertEqual(profile_source(data,config),('v4',PROFILE_V4))
+            for mode,expected in (('v4',PROFILE_V4),('v3_examples',PROFILE_V3),('v3',PROFILE_V3),('v2',original)):
                 config['personality_variant']=mode
                 lab=Lab(data=data,config=dict(config))
                 try:
@@ -48,6 +48,7 @@ class CharacterTest(unittest.TestCase):
     def test_one_dialogue_call_with_examples_only_on_normal_route(self):
         with tempfile.TemporaryDirectory() as folder:
             config=load_config(Path(folder));config['memory_token_budget']=0
+            config['personality_variant']='v3_examples'
             packets=[]
             def opener(request,timeout):
                 packets.append(json.loads(request.data))
@@ -63,4 +64,20 @@ class CharacterTest(unittest.TestCase):
                 lab.chat('I found an ugly clock at a flea market.',context=[])
                 self.assertEqual(len(packets),2)
                 self.assertEqual(packets[-1]['messages'][0]['content'],lab.personality)
+            finally:lab.memory.close()
+
+    def test_v4_uses_only_its_fixed_examples(self):
+        with tempfile.TemporaryDirectory() as folder:
+            config=load_config(Path(folder));config['memory_token_budget']=0
+            packets=[]
+            def opener(request,timeout):
+                packets.append(json.loads(request.data))
+                return io.BytesIO(b'{"message":{"content":"Hello."}}\n{"done":true}\n')
+            lab=Lab(data=folder,config=config,opener=opener)
+            try:
+                self.assertEqual(lab.personality_variant,'v4')
+                lab.chat('I found an ugly clock.')
+                self.assertEqual(len(packets),1)
+                self.assertEqual(packets[0]['messages'][0]['content'],PROFILE_V4.read_text(encoding='utf-8'))
+                self.assertNotIn('Additional voice examples;',packets[0]['messages'][0]['content'])
             finally:lab.memory.close()
