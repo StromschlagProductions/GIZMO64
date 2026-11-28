@@ -86,6 +86,36 @@ class DeploymentTest(unittest.TestCase):
                 deploy.activate(root,source,'broken')
             self.assertEqual((root/'current.json').read_bytes(),before)
 
+    def test_running_identity_follows_update_and_rollback(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base=Path(temporary)
+            (base/'first').mkdir();(base/'second').mkdir()
+            first=self.source(base/'first','0.9.1')
+            second=self.source(base/'second','0.9.2')
+            for source,version in ((first,'0.9.1'),(second,'0.9.2')):
+                (source/'version.py').write_text(
+                    f"VERSION = '{version}'\nSCHEMA_VERSION = 10\nANALYSIS_REVISION = '0.4.3'\n",
+                    encoding='utf-8')
+            root=base/'production'
+            deploy.activate(root,first,'a'*40)
+            rollback=json.loads((root/'current.json').read_text(encoding='utf-8'))
+            old_release,_=deploy.current_release(root)
+            deploy.activate(root,second,'b'*40)
+            new_release,_=deploy.current_release(root)
+
+            def identity(release):
+                code=('import sys;sys.path.insert(0,sys.argv[1]);'
+                      'import gizmo_lab;print(gizmo_lab.Lab.version,gizmo_lab.running_revision())')
+                result=subprocess.run([sys.executable,'-c',code,str(release)],
+                                      capture_output=True,text=True,timeout=15)
+                self.assertEqual(result.returncode,0,result.stderr)
+                return result.stdout.strip()
+
+            self.assertEqual(identity(new_release),'0.9.2 bbbbbbbb')
+            self.assertEqual(identity(old_release),'0.9.1 UNKNOWN')
+            deploy.atomic_json(root/'current.json',rollback)
+            self.assertEqual(identity(old_release),'0.9.1 aaaaaaaa')
+
     def test_second_process_is_locked_out(self):
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary)

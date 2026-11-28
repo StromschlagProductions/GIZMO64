@@ -22,6 +22,8 @@ PySide6 liegt projektlokal in `.venv` und wird mit `.venv/Scripts/python.exe -m 
 
 `GIZMO-Update.cmd` aktualisiert ausschließlich den Code, ohne LAB oder Ollama zu starten. Während LAB läuft, verhindert eine Installationssperre Updates und einen zweiten produktiven Start. Vorher LAB mit `/quit` schließen. `GIZMO.cmd --offline` überspringt die Updateprüfung. Die bisherigen Codeversionen bleiben erhalten; die Aktivierung erfolgt über einen atomaren Versionszeiger. Ein fehlgeschlagenes Download- oder Validierungsverfahren ersetzt die funktionierende Version nicht. Keine automatischen Datenbank-Downgrades oder Rücksicherungen.
 
+Ab LAB 0.9.2 gehört die Versionsanzeige zur Release-Abnahme: Die zwei Kennungen im Control Center müssen die `VERSION` der gestarteten Engine anzeigen. SETTINGS zeigt im Servicebereich das konfigurierte beziehungsweise aktive Modell und den kurzen Commit des tatsächlich gestarteten Release-Verzeichnisses. Bei jedem künftigen LAB-Tag sind Versionsdatei, Tag und Installationszeiger sowie Anzeige nach Update und Rollback mit einer synthetischen Installation zu prüfen. Ältere Releases vor 0.9.2 behalten bei einem Rollback ihre damalige statische Beschriftung.
+
 Die einmalige lokale Installation (Git-Pfad bei Bedarf anpassen):
 
 ```powershell

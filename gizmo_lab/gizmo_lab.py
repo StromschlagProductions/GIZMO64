@@ -24,6 +24,20 @@ DEFAULT_MODEL = 'gemma4:12b'
 OPTIONS = ('temperature', 'top_p', 'top_k', 'min_p', 'repeat_penalty', 'num_ctx', 'num_predict', 'seed')
 
 
+def running_revision(app_root=ROOT):
+    """Identify only the release that contains this running engine."""
+    pointer=app_root.parent.parent/'current.json'
+    try:
+        current=json.loads(pointer.read_text(encoding='utf-8'))
+        release=(pointer.parent/current['directory']).resolve()
+        revision=current['revision']
+        if release==app_root.resolve() and re.fullmatch(r'[0-9a-f]{7,40}',revision):
+            return revision[:8]
+    except (OSError,ValueError,KeyError,TypeError):
+        pass
+    return 'UNKNOWN'
+
+
 def private_dir():
     base = os.environ.get('GIZMO_LAB_DATA')
     if base:
@@ -228,6 +242,8 @@ class Uplink:
 
 
 class Lab:
+    version = VERSION
+
     def __init__(self, config=None, data=None, opener=None, runner=None, personality_file=None):
         self.data = Path(data) if data else private_dir()
         self.config = config or load_config(self.data)
@@ -913,7 +929,8 @@ def run_gui(screenshot=None, qa_report=None, config_qa_report=None):
             ''')
             outer=QWidget();outer.setObjectName('central');self.setCentralWidget(outer); root=QVBoxLayout(outer); root.setContentsMargins(24,22,24,18);root.setSpacing(12)
             head=QHBoxLayout(); names=QVBoxLayout(); names.addWidget(self.label('GIZMO','title'))
-            names.addWidget(self.label('CENTRAL INTELLIGENCE CORE','dim'));names.addWidget(self.label('STROMSCHLAG SYSTEMS // REV 0.1','dim'))
+            names.addWidget(self.label('CENTRAL INTELLIGENCE CORE','dim'))
+            self.header_version=self.label('STROMSCHLAG SYSTEMS // LAB '+VERSION,'dim');names.addWidget(self.header_version)
             head.addLayout(names);head.addStretch();self.pulse=Pulse();head.addWidget(self.pulse);root.addLayout(head)
             self.pages=QStackedWidget();root.addWidget(self.pages,1)
             self.home=QWidget();self.pages.addWidget(self.home);home=QVBoxLayout(self.home);home.setContentsMargins(0,8,0,0);home.setSpacing(11)
@@ -940,7 +957,7 @@ def run_gui(screenshot=None, qa_report=None, config_qa_report=None):
             actions=QHBoxLayout();self.start_button=QPushButton('◉  START CORE');self.start_button.clicked.connect(self.start_core)
             self.stop_button=QPushButton('⏻  SHUTDOWN');self.stop_button.setObjectName('shutdown');self.stop_button.clicked.connect(self.shutdown)
             actions.addWidget(self.start_button);actions.addWidget(self.stop_button);home.addLayout(actions)
-            home.addWidget(self.label('GIZMO CONTROL CENTER // REV 0.1','dim'));home.addStretch(1)
+            self.footer_version=self.label('GIZMO CONTROL CENTER // LAB '+VERSION,'dim');home.addWidget(self.footer_version);home.addStretch(1)
             self.build_model_page();self.build_settings_page();self.build_archive_page()
             self.gpu_process=QProcess(self);self.gpu_process.finished.connect(self.gpu_finished)
             self.api_manager=QNetworkAccessManager(self);self.api_pending=False;self.external_ollama=False
@@ -993,6 +1010,9 @@ def run_gui(screenshot=None, qa_report=None, config_qa_report=None):
             profile_button=QPushButton('SELECT PERSONALITY FILE…');profile_button.clicked.connect(self.select_profile);layout.addWidget(profile_button)
             save=QPushButton('SAVE SETTINGS');save.clicked.connect(self.save_settings);layout.addWidget(save);layout.addStretch()
             layout.addWidget(self.label('Saved locally. Changes to model parameters take effect on the next request.','dim'))
+            self.service_info=self.label('SERVICE // MODEL —  COMMIT '+running_revision(),'dim')
+            self.service_info.setWordWrap(True);self.service_info.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            layout.addWidget(self.service_info)
         def build_archive_page(self):
             layout=self.page('ARCHIVE // LOCAL');self.archive_tabs=QTabWidget();self.tables={}
             self.archive_summary=self.label('ANALYSIS // CORE OFFLINE','dim');self.archive_summary.setWordWrap(True);layout.addWidget(self.archive_summary)
@@ -1364,6 +1384,12 @@ def run_gui(screenshot=None, qa_report=None, config_qa_report=None):
             self.lab.memory.set_relation_status(ident,status);self.refresh_archive();self.log_line(f'RELATION #{ident} {status.upper()}')
         def refresh_status(self):
             active=bool(self.lab and self.lab.model and not self.lab.stop_event.is_set())
+            version=self.lab.version if self.lab else VERSION
+            self.header_version.setText('STROMSCHLAG SYSTEMS // LAB '+version)
+            self.footer_version.setText('GIZMO CONTROL CENTER // LAB '+version)
+            model=self.lab.model if active else (self.lab.config if self.lab else self.saved_config).get('model',DEFAULT_MODEL)
+            self.service_info.setText('SERVICE // MODEL '+str(model)+('' if active else ' (CONFIGURED)')+
+                                      '  COMMIT '+running_revision())
             self.indicators['core'].setText('ONLINE' if active else ('STARTING' if self.busy and self.lab else 'OFFLINE'))
             self.indicators['ollama'].setText('CONNECTED' if self.lab and self.lab.ollama_ready else ('AVAILABLE' if self.external_ollama else 'OFFLINE'))
             self.indicators['model'].setText(self.lab.model if active else 'NOT LOADED')
