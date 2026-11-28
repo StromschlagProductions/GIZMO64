@@ -22,7 +22,8 @@ class LabTest(unittest.TestCase):
                 self.assertEqual(lab.personality_path,path.resolve())
                 lab.chat('Hello?',context=[])
                 self.assertEqual(payloads[0]['messages'][0],{'role':'system','content':profile})
-                self.assertTrue(all(message['role']=='system' for message in payloads[0]['messages'][:3]))
+                self.assertTrue(all(message['role']=='system' for message in payloads[0]['messages'][:2]))
+                self.assertEqual(payloads[0]['messages'][2]['role'],'user')
             finally:
                 lab.memory.close()
 
@@ -34,6 +35,37 @@ class LabTest(unittest.TestCase):
                 self.assertEqual(lab.personality_path,(Path(__file__).resolve().parent/'personality.example.txt').resolve())
                 self.assertIn('GIZMO_Awakening_V2_EN.txt',lab.personality_warning)
                 self.assertIn(str(lab.personality_path),lab.personality_warning)
+            finally:
+                lab.memory.close()
+
+    def test_lean_chat_keeps_full_profile_and_pauses_story_without_deleting_it(self):
+        with tempfile.TemporaryDirectory() as folder:
+            data=Path(folder)
+            profile='Synthetic original profile. Keep a gentle voice.'
+            path=data/'GIZMO_Awakening_V2_EN.txt'
+            path.write_text(profile,encoding='utf-8')
+            story_archive=data/'story.sqlite3'
+            story_archive.write_bytes(b'synthetic story sentinel')
+            seen=[]
+            def opener(request,timeout):
+                seen.append(json.loads(request.data))
+                return io.BytesIO(b'{"message":{"content":"Hello."}}\n{"done":true}\n')
+            config={'model':'synthetic','story_enabled':True,'lean_core_enabled':True,
+                    'num_ctx':8192,'num_predict':256,'memory_token_budget':450}
+            lab=Lab(data=data,config=config,opener=opener)
+            try:
+                self.assertIsNone(lab.story)
+                lab.chat('How are you?',context=[])
+                self.assertEqual(seen[-1]['messages'][0],{'role':'system','content':profile})
+                self.assertEqual(len([item for item in seen[-1]['messages'] if item['role']=='system']),2)
+                self.assertEqual(seen[-1]['options']['num_ctx'],8192)
+                lab.chat('Mein Hirn ist heute langsam.',context=[])
+                self.assertEqual(len([item for item in seen[-1]['messages'] if item['role']=='system']),2)
+                lab.chat('What time is it?',context=[])
+                self.assertEqual(len(seen),3)
+                self.assertEqual(len([item for item in seen[-1]['messages'] if item['role']=='system']),3)
+                self.assertEqual(story_archive.read_bytes(),b'synthetic story sentinel')
+                self.assertTrue((data/'memory.sqlite3').exists())
             finally:
                 lab.memory.close()
 

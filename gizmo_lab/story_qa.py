@@ -34,6 +34,7 @@ def synthetic_lab(path,opener,model_name='gemma4:12b'):
     shutil.copyfile(ROOT/'qa_personality.en.txt',path/'GIZMO_Awakening_V2_EN.txt')
     config=json.loads((ROOT/'config.example.json').read_text(encoding='utf-8'))
     config.update(story_enabled=True,uplink_enabled=False,num_ctx=8192,num_predict=256,
+                  lean_core_enabled=False,
                   model=model_name,think=False)
     return Lab(data=path,config=config,opener=opener)
 

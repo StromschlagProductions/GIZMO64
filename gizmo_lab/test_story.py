@@ -48,7 +48,7 @@ class StoryTest(unittest.TestCase):
     def setup_lab(self,root,model):
         data=Path(root)
         (data/'GIZMO_Awakening_V2_EN.txt').write_text('Synthetic companion profile.',encoding='utf-8')
-        return Lab(data=data,config={'model':'synthetic','story_enabled':True,'num_ctx':8192,'num_predict':128},opener=model)
+        return Lab(data=data,config={'model':'synthetic','story_enabled':True,'lean_core_enabled':False,'num_ctx':8192,'num_predict':128},opener=model)
 
     def test_story_isolated_from_real_memory_and_resumes(self):
         with tempfile.TemporaryDirectory() as folder:

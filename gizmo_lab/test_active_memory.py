@@ -34,6 +34,17 @@ class ActiveMemoryTest(unittest.TestCase):
         result='\n'.join(self.store.retrieve('What is my four-legged companion called?',900)[0])
         self.assertIn('Milo',result)
 
+    def test_lean_budget_keeps_relevant_pet_fact_amid_unrelated_memory(self):
+        for number in range(24):
+            self.relation('USER','likes',f'hobby{number}',f'I like hobby{number}.',value=True)
+        self.relation('USER','has_dog','Nori','My dog is Nori.',object_kind='pet')
+        source=self.store.add_message(self.conversation,'user','Nori is a terrier.')
+        self.store.add_relation('Nori','pet','attribute',None,None,'terrier',source,
+                                'Nori is a terrier.',.95,'active',property_key='breed')
+        result='\n'.join(self.store.retrieve('What breed is my dog Nori?',450)[0])
+        self.assertIn('Nori',result)
+        self.assertIn('terrier',result)
+
     def test_language_neutral_graph_and_legacy_small_budget(self):
         source=self.store.add_message(self.conversation,'user','My name is Alex.')
         self.store.extract_user('My name is Alex.',source)

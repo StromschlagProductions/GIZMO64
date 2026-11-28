@@ -371,7 +371,7 @@ class Lab:
                 if self.analyzer:self.analyzer.resume()
 
     def configure_story(self):
-        enabled=bool(self.config.get('story_enabled',False))
+        enabled=bool(self.config.get('story_enabled',False)) and not self.config.get('lean_core_enabled',False)
         if enabled and self.story is None:
             from story import StoryDirector
             self.story=StoryDirector(self.data/'story.sqlite3',self.request,
@@ -905,6 +905,7 @@ def run_gui(screenshot=None, qa_report=None, config_qa_report=None):
             self.uplink_enabled=QCheckBox('ENABLE COMMODORE UPLINK WHEN CORE STARTS')
             layout.addWidget(self.uplink_enabled)
             self.story_enabled=QCheckBox('ENABLE STORY DIRECTOR (FICTIONAL ADVENTURES)')
+            self.story_enabled.setToolTip('Paused while Lean Core is active; the saved story preference is retained.')
             layout.addWidget(self.story_enabled)
             self.uplink_host=QLineEdit();self.uplink_host.setPlaceholderText('auto (private LAN address)')
             form.addRow('UPLINK HOST',self.uplink_host)
@@ -1076,6 +1077,7 @@ def run_gui(screenshot=None, qa_report=None, config_qa_report=None):
                 field.setValue(int(number) if isinstance(field,QSpinBox) else float(number))
             self.uplink_enabled.setChecked(bool(config.get('uplink_enabled',False)))
             self.story_enabled.setChecked(bool(config.get('story_enabled',False)))
+            self.story_enabled.setEnabled(not bool(config.get('lean_core_enabled',False)))
             self.uplink_host.setText(str(config.get('uplink_host','auto')))
             self.uplink_port.setValue(int(config.get('uplink_port',6464)))
             self.show_profile()
@@ -1292,7 +1294,8 @@ def run_gui(screenshot=None, qa_report=None, config_qa_report=None):
             self.uplink_detail.setText('UPLINK // '+uplink['state'].upper()+'  '+endpoint+('  ERROR: '+uplink['error'] if uplink['error'] else ''))
             self.indicators['story'].setText(
                 self.lab.story.status()['status'].upper() if self.lab and self.lab.story else
-                ('READY' if self.saved_config.get('story_enabled') else 'DISABLED'))
+                ('PAUSED' if (self.lab.config if self.lab else self.saved_config).get('lean_core_enabled') else
+                 'READY' if self.saved_config.get('story_enabled') else 'DISABLED'))
             if active and not self.busy:
                 try:
                     self.metrics['memories'].setText(str(self.lab.memory.db.execute("SELECT (SELECT COUNT(*) FROM memories WHERE status='active')+(SELECT COUNT(*) FROM relations WHERE status='active')").fetchone()[0]))
