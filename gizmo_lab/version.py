@@ -1,4 +1,4 @@
 """Release identifiers shared by the application and deployment tooling."""
-VERSION = '0.9.4'
+VERSION = '0.9.5'
 SCHEMA_VERSION = 10
 ANALYSIS_REVISION = '0.4.3'

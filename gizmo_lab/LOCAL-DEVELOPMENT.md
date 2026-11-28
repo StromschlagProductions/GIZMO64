@@ -28,6 +28,8 @@ LAB 0.9.3 ergänzt in SETTINGS die Profilwahl `V3 + situational examples` (Stand
 
 LAB 0.9.4 ergänzt `V4 fixed examples` als Standard. V4 wird unverändert als Release-Datei geladen; dynamische Character-Library-Beispiele bleiben ausschließlich im separat auswählbaren V3-Modus. Alle bisherigen Profilmodi bleiben in SETTINGS erhalten. Bei bestehenden Installationen mit gespeicherter Profilwahl ist die Aktivierung von V4 ein gezielter Wechsel nur des Schlüssels `personality_variant`; übrige Konfiguration und private Profildateien bleiben unverändert.
 
+LAB 0.9.5 ergänzt `V4.1 fixed examples` als Standard. V4.1 wird unverändert als Release-Datei geladen, ohne dynamische Character-Library-Beispiele. V4 und alle älteren Profilmodi bleiben auswählbar. Bei bestehenden Installationen wird ausschließlich `personality_variant` nach einer privaten Sicherung auf `v4_1` gesetzt; Updater und Engine verändern die übrigen Einstellungen und privaten Dateien nicht.
+
 Die einmalige lokale Installation (Git-Pfad bei Bedarf anpassen):
 
 ```powershell

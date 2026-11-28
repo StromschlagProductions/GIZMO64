@@ -1187,7 +1187,7 @@ def run_gui(screenshot=None, qa_report=None, config_qa_report=None):
             self.story_enabled.setEnabled(not bool(config.get('lean_core_enabled',False)))
             self.uplink_host.setText(str(config.get('uplink_host','auto')))
             self.uplink_port.setValue(int(config.get('uplink_port',6464)))
-            self.profile_mode.setCurrentIndex(max(0,self.profile_mode.findData(config.get('personality_variant','v4'))))
+            self.profile_mode.setCurrentIndex(max(0,self.profile_mode.findData(config.get('personality_variant','v4_1'))))
             self.show_profile()
             self.pages.setCurrentIndex(2)
         def show_profile(self):
@@ -1404,7 +1404,7 @@ def run_gui(screenshot=None, qa_report=None, config_qa_report=None):
             self.header_version.setText('STROMSCHLAG SYSTEMS // LAB '+version)
             self.footer_version.setText('GIZMO CONTROL CENTER // LAB '+version)
             model=self.lab.model if active else (self.lab.config if self.lab else self.saved_config).get('model',DEFAULT_MODEL)
-            mode=self.lab.personality_variant if self.lab else self.saved_config.get('personality_variant','v4')
+            mode=self.lab.personality_variant if self.lab else self.saved_config.get('personality_variant','v4_1')
             try:profile=self.lab.personality_path.name if self.lab else profile_source(private_dir(),self.saved_config)[1].name
             except ValueError:profile='UNAVAILABLE'
             self.service_info.setText('SERVICE // LAB '+version+'  MODEL '+str(model)+('' if active else ' (CONFIGURED)')+
