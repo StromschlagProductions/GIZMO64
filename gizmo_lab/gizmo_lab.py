@@ -259,6 +259,8 @@ class Lab:
         self.context = []
         self.memory = Memory(self.data / 'memory.sqlite3')
         self.story = None
+        self.story_lite = None
+        self.ollama_ready = False
         try:self.configure_story()
         except Exception:
             self.memory.close()
@@ -270,7 +272,6 @@ class Lab:
         self.conversation_id = self.memory.conversation(self.memory.latest_conversation())
         self.last_diagnostics = {}
         self.model = None
-        self.ollama_ready = False
         self.preload_s = None
 
     def request(self, endpoint, payload=None, timeout=5):
@@ -310,8 +311,10 @@ class Lab:
         print('[+] Ollama bereit', flush=True)
         self.ollama_ready = True
         self.preload(self.config.get('model', DEFAULT_MODEL))
+        self.configure_story()
         self.analyzer = Analyzer(self.memory.path,self.config,self.opener)
         self.analyzer.start()
+        if self.story_lite:self.story_lite.start()
         if self.config.get('uplink_enabled'):
             self.start_uplink()
 
@@ -371,14 +374,31 @@ class Lab:
                 if self.analyzer:self.analyzer.resume()
 
     def configure_story(self):
-        enabled=bool(self.config.get('story_enabled',False)) and not self.config.get('lean_core_enabled',False)
+        lite=bool(self.ollama_ready and self.config.get('lean_core_enabled',False)
+                  and self.config.get('story_lite_enabled',False))
+        enabled=lite or (bool(self.config.get('story_enabled',False)) and not self.config.get('lean_core_enabled',False))
+        if self.story is not None and bool(self.story_lite)!=lite:
+            if self.story_lite:self.story_lite.stop();self.story_lite=None
+            self.story.close();self.story=None
         if enabled and self.story is None:
             from story import StoryDirector
-            self.story=StoryDirector(self.data/'story.sqlite3',self.request,
+            director_request=(lambda endpoint,payload=None,timeout=5:
+                              self.story_lite.request(endpoint,payload,timeout)) if lite else self.request
+            self.story=StoryDirector(self.data/'story.sqlite3',director_request,
                                      lambda:self.model or self.config.get('model',DEFAULT_MODEL),
-                                     stopping=self.stop_event.is_set,
-                                     response_opened=lambda response:setattr(self,'active_response',response))
-        elif not enabled and self.story is not None:
+                                     stopping=lambda:self.stop_event.is_set() or bool(
+                                         self.story_lite and not self.story_lite.preparing_done.is_set()
+                                         and self.story_lite.pause_event.is_set()),
+                                     response_opened=lambda response:setattr(self,'active_response',response),
+                                     context_size=int(self.config.get('num_ctx',8192)) if lite else 6144,
+                                     stream_generation=lite)
+        if lite and self.story_lite is None:
+            from story_lite import StoryLite
+            self.story_lite=StoryLite(self,self.story)
+            if self.ollama_ready:self.story_lite.start()
+        elif not lite and self.story_lite is not None:
+            self.story_lite.stop();self.story_lite=None
+        if not enabled and self.story is not None:
             self.story.close();self.story=None
 
     def chat(self, prompt, context=None, on_text=None, model=None, origin='terminal'):
@@ -387,7 +407,20 @@ class Lab:
                 if self.stop_event.is_set():raise RuntimeError('GIZMO LAB wird beendet')
                 self.chat_done.clear()
             try:
-                if context is None and self.story:
+                lite_route='normal'
+                lite_paused=False
+                if context is None and self.story_lite:
+                    self.story_lite.pause()
+                    lite_paused=True
+                    lite_route=self.story_lite.route(prompt)
+                    if lite_route=='release':
+                        return self._story_lite_release(prompt,on_text,model,origin)
+                    if lite_route!='normal':
+                        if self.analyzer:self.analyzer.pause()
+                        try:return self._story_chat(prompt,lite_route,on_text,model,origin)
+                        finally:
+                            if self.analyzer and not self.stop_event.is_set():self.analyzer.resume()
+                if context is None and self.story and not self.story_lite:
                     active=self.story.status()['status']=='active'
                     intent=self.story.intent(prompt,active)
                     if intent!='normal':
@@ -396,7 +429,49 @@ class Lab:
                         finally:
                             if self.analyzer and not self.stop_event.is_set():self.analyzer.resume()
                 return self._chat(prompt,context,on_text,model,origin)
-            finally:self.chat_done.set()
+            finally:
+                if lite_paused and self.story_lite and not self.stop_event.is_set():
+                    self.story_lite.resume(normal_turn=lite_route=='normal')
+                self.chat_done.set()
+
+    def _story_lite_release(self,prompt,on_text,model,origin):
+        """One dialogue call; each complete sentence is validated before display."""
+        prepared=self.story_lite.prepared()
+        if prepared is None:return self._chat(prompt,on_text=on_text,model=model,origin=origin)
+        started=time.perf_counter();world_id=prepared['id']
+        scene=prepared['opening_scene']
+        dialogue_prompt=('A small, explicitly fictional discovery may enter this conversation. '
+                         'Reply as GIZMO in one or two natural sentences. Use only this released '
+                         'observation. Do not invent consequences, secret causes or real biography. '
+                         'Let the user continue normally if they wish.\nObservation: '+scene+'\nUser: '+prompt)
+        pending='';released='';first=None
+        def safe_stream(chunk):
+            nonlocal pending,released,first
+            pending+=chunk
+            matches=list(re.finditer(r'(?<=[.!?])\s+',pending))
+            if matches:
+                end=matches[-1].end();safe=pending[:end]
+                self.story.validate_reply(released+safe,world_id)
+                if on_text:
+                    if first is None:first=time.perf_counter()-started
+                    on_text(safe)
+                released+=safe;pending=pending[end:]
+        result=self._chat(dialogue_prompt,context=[],on_text=safe_stream if on_text else None,
+                          model=model,origin=origin,response_tokens=160,context_window=8192)
+        if result['abort_reason']!='completed' or not result['answer'].strip():
+            result['abort_reason']='story_generation_failed'
+            return result
+        try:self.story_lite.commit_release(world_id,result['answer'])
+        except (ValueError,RuntimeError):
+            result['abort_reason']='story_validation_failed';return result
+        if on_text and pending:
+            if first is None:first=time.perf_counter()-started
+            on_text(pending)
+        result['first_text_s']=first if on_text else time.perf_counter()-started
+        result['total_s']=time.perf_counter()-started
+        result['story_metrics']={'route':'prepared','director_s':0,
+                                 'dialogue_model_s':result.get('total_s',0)}
+        return result
 
     def _story_chat(self,prompt,intent,on_text,model,origin):
         started=time.perf_counter()
@@ -446,7 +521,8 @@ class Lab:
                     released+=safe
                     pending=pending[end:]
             result=self._chat(dialogue_prompt,context=history,on_text=safe_stream if on_text else None,
-                              model=model,origin=origin,response_tokens=160,context_window=6144)
+                              model=model,origin=origin,response_tokens=160,
+                              context_window=self.config.get('num_ctx',8192) if self.story_lite else 6144)
             if result['abort_reason']!='completed' or not result['answer'].strip():
                 return simple('The fictional reply could not be completed.','story_generation_failed')
             checked=time.perf_counter()
@@ -489,7 +565,8 @@ class Lab:
         history=self.story.dialogue_history(world_id)
         context_s=time.perf_counter()-context_started
         try:result=self._chat(dialogue_prompt,context=history,on_text=None,model=model,origin=origin,
-                              response_tokens=192,context_window=6144)
+                              response_tokens=192,
+                              context_window=self.config.get('num_ctx',8192) if self.story_lite else 6144)
         except Exception:
             if decision is None:self.story.discard_unseen(opening['world_id'])
             raise
@@ -649,6 +726,7 @@ class Lab:
                 return
             self.stop_event.set()
             if self.uplink:self.uplink.stop()
+            if self.story_lite:self.story_lite.stop()
             if self.analyzer:
                 self.analyzer.stop()
             response = self.active_response
@@ -695,6 +773,8 @@ class Lab:
             self.ollama_ready = False
             self.memory.close()
             if self.story:
+                if self.story_lite and self.story_lite.worker:
+                    self.story_lite.worker.join(timeout=5)
                 self.story.close();self.story=None
 
 
@@ -904,8 +984,8 @@ def run_gui(screenshot=None, qa_report=None, config_qa_report=None):
             layout.addWidget(self.profile_warning)
             self.uplink_enabled=QCheckBox('ENABLE COMMODORE UPLINK WHEN CORE STARTS')
             layout.addWidget(self.uplink_enabled)
-            self.story_enabled=QCheckBox('ENABLE STORY DIRECTOR (FICTIONAL ADVENTURES)')
-            self.story_enabled.setToolTip('Paused while Lean Core is active; the saved story preference is retained.')
+            self.story_enabled=QCheckBox('ENABLE LEGACY STORY DIRECTOR (FICTIONAL ADVENTURES)')
+            self.story_enabled.setToolTip('Legacy Director is paused in Lean Core. Story Lite can prepare optional scenes while GIZMO is idle; the saved legacy preference is retained.')
             layout.addWidget(self.story_enabled)
             self.uplink_host=QLineEdit();self.uplink_host.setPlaceholderText('auto (private LAN address)')
             form.addRow('UPLINK HOST',self.uplink_host)
@@ -1293,6 +1373,7 @@ def run_gui(screenshot=None, qa_report=None, config_qa_report=None):
             endpoint=f"{uplink['host']}:{uplink['port']}" if uplink['host'] else 'OFF'
             self.uplink_detail.setText('UPLINK // '+uplink['state'].upper()+'  '+endpoint+('  ERROR: '+uplink['error'] if uplink['error'] else ''))
             self.indicators['story'].setText(
+                'PREPARING' if self.lab and self.lab.story_lite and not self.lab.story_lite.preparing_done.is_set() else
                 self.lab.story.status()['status'].upper() if self.lab and self.lab.story else
                 ('PAUSED' if (self.lab.config if self.lab else self.saved_config).get('lean_core_enabled') else
                  'READY' if self.saved_config.get('story_enabled') else 'DISABLED'))

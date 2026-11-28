@@ -64,12 +64,14 @@ def merge_patch(state, patch):
 class StoryDirector:
     """Story storage and director decisions, independent of LAB's Memory."""
 
-    def __init__(self, path, request, model, library_dir=None, stopping=None, response_opened=None):
+    def __init__(self, path, request, model, library_dir=None, stopping=None, response_opened=None,context_size=6144,stream_generation=False):
         self.path = Path(path)
         self.request = request
         self.model = model
         self.stopping = stopping or (lambda: False)
         self.response_opened = response_opened or (lambda response: None)
+        self.context_size=int(context_size)
+        self.stream_generation=bool(stream_generation)
         library_dir = Path(library_dir or Path(__file__).resolve().parent/'narrative_library')
         self.library = load_library(library_dir/'narrative_library.json')
         self.policy = json.loads((library_dir/'origin_campaign_policy.json').read_text(encoding='utf-8'))
@@ -194,15 +196,29 @@ class StoryDirector:
         if self.stopping():raise RuntimeError('Story Director is stopping')
         if len(instructions.encode('utf-8'))+len(request.encode('utf-8'))>20000:
             raise ValueError('Director context exceeds the safe local budget')
-        payload = {'model': self.model(), 'stream': False, 'format': schema,
+        payload = {'model': self.model(), 'stream': self.stream_generation, 'format': schema,
                    'keep_alive': -1, 'think': False,
-                   'options': {'temperature': 0.55, 'num_predict': max_tokens, 'num_ctx': 6144},
+                   'options': {'temperature': 0.55, 'num_predict': max_tokens, 'num_ctx': self.context_size},
                    'messages': [{'role': 'system', 'content': instructions},
                                 {'role': 'user', 'content': request}]}
         started=time.perf_counter()
         with self.request('/api/chat', payload, timeout=150) as response:
             self.response_opened(response)
-            try:packet = json.load(response)
+            try:
+                if self.stream_generation:
+                    chunks=[];packet={}
+                    for raw in response:
+                        if self.stopping():raise RuntimeError('Story preparation interrupted')
+                        event=json.loads(raw)
+                        if event.get('error'):raise RuntimeError(event['error'])
+                        chunks.append(event.get('message',{}).get('content',''))
+                        if event.get('done'):
+                            packet=event;break
+                    if not packet.get('done'):
+                        raise ValueError('Incomplete Director stream; no story state saved')
+                    packet['message']={'content':''.join(chunks)}
+                else:
+                    packet=json.load(response)
             finally:self.response_opened(None)
         if self.stopping():raise RuntimeError('Story Director is stopping')
         if packet.get('error'):
