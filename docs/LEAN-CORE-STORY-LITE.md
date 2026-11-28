@@ -1,8 +1,8 @@
-# GIZMO Lean Core – Phase 2: Story Lite (isolierter Entwicklungsstand)
+# GIZMO LAB 0.9.0 – Lean Core Phase 2: Story Lite
 
 ## Verhalten
 
-Story Lite verwendet den vorhandenen Story Director und die Narrative Library v1.1. Gemma 4 12B und Ollama bleiben die einzigen Inferenzkomponenten. Die alte Engine bleibt über den Phase-1-Commit `d767852` und die unveränderte produktive LAB-0.8.1-Installation als Rückfall erhalten.
+Story Lite verwendet den vorhandenen Story Director und die Narrative Library v1.1. Gemma 4 12B und Ollama bleiben die einzigen Inferenzkomponenten. Die alte Engine bleibt über den Phase-1-Commit `d767852` und die aufbewahrte LAB-0.8.1-Installation als Rückfall erhalten.
 
 Nach mindestens zwei normalen Gesprächsrunden kann GIZMO in einer Pause von mindestens 90 Sekunden eine kurze fiktionale Entdeckung vorbereiten. Standardmäßig liegt die Chance pro geeigneter Pause bei 10 %, der Mindestabstand zwischen Welten bei 72 Stunden; eine vorbereitete Szene verfällt nach sieben Tagen. Damit kann normale Unterhaltung auch längere Zeit ohne Story-Ereignis stattfinden. Die Origin-Kampagne wird gelegentlich berücksichtigt, ihre verborgene Wahrheit entsteht weiterhin erst lokal zur Laufzeit. Weder Geheimnisse noch Profil oder reale Erinnerungen werden in die sichtbare Szene übernommen.
 
@@ -31,4 +31,4 @@ Alle **17 spoilerfreien Integrationsprüfungen** bestanden: Hintergrundstart und
 
 Die gemessenen 3,38–3,47 s für vorbereitete Ereignisse und 4,41–4,53 s nach einem Hintergrundabbruch liegen über dem warmen Ziel von 1–3 s. Eine unerwartete Handlung braucht weiterhin einen Director-Aufruf und etwa 11 s. Die thematische Freigabe ist bewusst streng; semantisch passende Formulierungen ohne genügend gemeinsame Wörter können ein vorbereitetes Ereignis ungenutzt lassen. Bestehende aktive Langgeschichten blockieren die Vorbereitung einer zweiten Welt. Die Tests belegen weder C64-Langzeitbetrieb noch eine vollständige kreative Qualitätsbewertung.
 
-Der Stand bleibt deshalb auf dem isolierten Entwicklungsbranch. Eine produktive Installation erfolgt erst nach ausdrücklicher Freigabe. Das persönliche Profil, private Erinnerungen, bestehende Geschichten, C64-Client und Control Center wurden produktiv nicht geändert. Die lokale Sicherung aus Phase 1 bleibt in `.local-test/lean-core/private-backup-20261128-local/` erhalten.
+Die produktive Erprobung wurde ausdrücklich freigegeben. Die Installation erfolgt über den bestehenden Updater; der vorherige LAB-0.8.1-Release bleibt als Rückfall erhalten. Das persönliche Profil, private Erinnerungen und bestehende Geschichten liegen außerhalb des Release-Verzeichnisses und werden vom Updater nicht überschrieben. Der C64-Client bleibt unverändert. Die lokale Sicherung aus Phase 1 bleibt in `.local-test/lean-core/private-backup-20261128-local/` erhalten; vor diesem Update wird zusätzlich eine frische Sicherung erstellt.
