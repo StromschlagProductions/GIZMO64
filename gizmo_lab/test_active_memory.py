@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from analysis import validate_claim
 from gizmo_lab import Lab
@@ -33,6 +34,25 @@ class ActiveMemoryTest(unittest.TestCase):
             self.assertIn(word,result)
         result='\n'.join(self.store.retrieve('What is my four-legged companion called?',900)[0])
         self.assertIn('Milo',result)
+
+    def test_direct_confirmed_family_question_uses_compact_graph_evidence(self):
+        self.relation('USER','has_sister','Emma','My sister is Emma.',object_kind='person')
+        self.relation('Emma','studied','psychology','Emma studied psychology.',value=True)
+        decoy=self.store.add_message(self.conversation,'user','A separate museum conversation.')
+        with patch.object(self.store,'archive_matches',return_value=[(decoy,self.conversation,'A separate museum conversation.',.8)]) as archive, \
+             patch.object(self.store,'episode_matches',return_value=([(99,'{"episode":99}','episode:99')],[])) as episodes:
+            lines=self.store.retrieve('Do you know my sister?',900)[0]
+            payload='\n'.join(lines)
+            self.assertIn('"relation":"has_sister","target":"Emma"',payload)
+            self.assertIn('psychology',payload)
+            self.assertEqual(self.store.last_retrieval['selected'][0],'relation:1')
+            self.assertNotIn('museum',payload)
+            self.assertNotIn('"episode"',payload)
+            archive.assert_not_called()
+            episodes.assert_not_called()
+            self.store.retrieve('When did I tell you about my sister?',900)
+            archive.assert_called_once()
+            episodes.assert_called_once()
 
     def test_lean_budget_keeps_relevant_pet_fact_amid_unrelated_memory(self):
         for number in range(24):
