@@ -30,6 +30,8 @@ LAB 0.9.4 ergänzt `V4 fixed examples` als Standard. V4 wird unverändert als Re
 
 LAB 0.9.5 ergänzt `V4.1 fixed examples` als Standard. V4.1 wird unverändert als Release-Datei geladen, ohne dynamische Character-Library-Beispiele. V4 und alle älteren Profilmodi bleiben auswählbar. Bei bestehenden Installationen wird ausschließlich `personality_variant` nach einer privaten Sicherung auf `v4_1` gesetzt; Updater und Engine verändern die übrigen Einstellungen und privaten Dateien nicht.
 
+LAB 0.9.6 behebt den direkten Abruf bestätigter persönlicher Beziehungen: Die Beziehung wird vor ergänzenden Belegen bereitgestellt; bei einer direkten Frage verdrängen alte Archiv- und Episodeneinträge weder diese Information noch den jüngsten Gesprächsverlauf. V4.1, Story Lite, Modellparameter und das Datenbankschema bleiben unverändert.
+
 Die einmalige lokale Installation (Git-Pfad bei Bedarf anpassen):
 
 ```powershell
