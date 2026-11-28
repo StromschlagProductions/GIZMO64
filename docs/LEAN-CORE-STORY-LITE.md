@@ -1,4 +1,4 @@
-# GIZMO LAB 0.9.0 – Lean Core Phase 2: Story Lite
+# GIZMO LAB 0.9.1 – Lean Core Phase 2: Story Lite
 
 ## Verhalten
 
@@ -32,3 +32,5 @@ Alle **17 spoilerfreien Integrationsprüfungen** bestanden: Hintergrundstart und
 Die gemessenen 3,38–3,47 s für vorbereitete Ereignisse und 4,41–4,53 s nach einem Hintergrundabbruch liegen über dem warmen Ziel von 1–3 s. Eine unerwartete Handlung braucht weiterhin einen Director-Aufruf und etwa 11 s. Die thematische Freigabe ist bewusst streng; semantisch passende Formulierungen ohne genügend gemeinsame Wörter können ein vorbereitetes Ereignis ungenutzt lassen. Bestehende aktive Langgeschichten blockieren die Vorbereitung einer zweiten Welt. Die Tests belegen weder C64-Langzeitbetrieb noch eine vollständige kreative Qualitätsbewertung.
 
 Die produktive Erprobung wurde ausdrücklich freigegeben. Die Installation erfolgt über den bestehenden Updater; der vorherige LAB-0.8.1-Release bleibt als Rückfall erhalten. Das persönliche Profil, private Erinnerungen und bestehende Geschichten liegen außerhalb des Release-Verzeichnisses und werden vom Updater nicht überschrieben. Der C64-Client bleibt unverändert. Die lokale Sicherung aus Phase 1 bleibt in `.local-test/lean-core/private-backup-20261128-local/` erhalten; vor diesem Update wird zusätzlich eine frische Sicherung erstellt.
+
+Bei der ersten Installation von LAB 0.9.0 über den alten Updater fehlte das neue Modul `story_lite.py` im Installationsverzeichnis. Der Startzeiger wurde auf LAB 0.8.1 zurückgesetzt. LAB 0.9.1 liest die Dateiliste aus dem Zielrelease und prüft vor der Aktivierung sämtliche Dateien. Der einmalige Übergang von 0.8.1 benötigt den aktualisierten Updater aus diesem geprüften Quellstand; danach verwendet der normale Starter wieder den installierten Updater.

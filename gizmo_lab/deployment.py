@@ -25,6 +25,20 @@ FILES = ('gizmo_lab.py','memory.py','analysis.py','version.py','deployment.py',
 TAG = re.compile(r'lab-v(\d+)\.(\d+)\.(\d+)$')
 
 
+def release_files(source):
+    """Read the file list from the release being installed, not the old updater."""
+    tree=ast.parse((source/'deployment.py').read_text(encoding='utf-8'))
+    for node in tree.body:
+        if isinstance(node,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='FILES' for t in node.targets):
+            names=ast.literal_eval(node.value)
+            if (not isinstance(names,tuple) or not names or
+                any(not isinstance(name,str) or not name or Path(name).is_relative_to('..') or
+                    Path(name).is_absolute() or '..' in Path(name).parts for name in names)):
+                break
+            return names
+    raise RuntimeError('Ungültige Release-Dateiliste')
+
+
 def atomic_json(path, value):
     temporary = path.with_name(path.name+'.'+uuid.uuid4().hex+'.tmp')
     temporary.write_text(json.dumps(value,indent=2),encoding='utf-8')
@@ -61,7 +75,7 @@ def installation_lock(root):
 
 
 def release_version(source):
-    for name in FILES:
+    for name in release_files(source):
         path=source/name
         if path.is_symlink() or not path.is_file():
             raise RuntimeError(f'Unvollständige LAB-Version: {name}')
@@ -95,7 +109,7 @@ def activate(root, source, revision, expected_version=None):
     with tempfile.TemporaryDirectory(prefix='stage-',dir=root) as temporary:
         staging=Path(temporary)/'app'
         staging.mkdir()
-        for name in FILES:
+        for name in release_files(source):
             (staging/name).parent.mkdir(parents=True,exist_ok=True)
             shutil.copyfile(source/name,staging/name)
         release_version(staging)
@@ -140,7 +154,11 @@ def update(root):
         source=temporary/'source'
         source.mkdir()
         with ZipFile(archive) as bundle:
-            for name in FILES:
+            manifest=bundle.getinfo('gizmo_lab/deployment.py')
+            if manifest.file_size>2_000_000:
+                raise RuntimeError('Release-Datei unerwartet groß')
+            (source/'deployment.py').write_bytes(bundle.read(manifest))
+            for name in release_files(source):
                 info=bundle.getinfo('gizmo_lab/'+name)
                 if info.file_size>2_000_000:
                     raise RuntimeError('Release-Datei unerwartet groß')

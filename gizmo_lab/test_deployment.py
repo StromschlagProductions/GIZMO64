@@ -118,6 +118,11 @@ class DeploymentTest(unittest.TestCase):
             deploy.git_run(GIT,'-C',repository,'config','user.name','Synthetic QA')
             deploy.git_run(GIT,'-C',repository,'config','user.email','qa@example.invalid')
             shutil.copytree(SOURCE,repository/'gizmo_lab',ignore=shutil.ignore_patterns('__pycache__','*.pyc'))
+            # The release adds a module unknown to the already installed updater.
+            (repository/'gizmo_lab'/'future_module.py').write_text('VALUE = 1\n',encoding='utf-8')
+            manifest=repository/'gizmo_lab'/'deployment.py'
+            manifest.write_text(manifest.read_text(encoding='utf-8').replace(
+                "'story_lite.py',", "'story_lite.py','future_module.py',"),encoding='utf-8')
             deploy.git_run(GIT,'-C',repository,'add','gizmo_lab')
             deploy.git_run(GIT,'-C',repository,'commit','-m','Synthetic release fixture')
             deploy.git_run(GIT,'-C',repository,'tag','lab-v'+VERSION)
@@ -128,4 +133,5 @@ class DeploymentTest(unittest.TestCase):
             release,pointer=deploy.current_release(root)
             self.assertEqual(pointer['version'],VERSION)
             self.assertEqual(len(list((root/'releases').iterdir())),2)
-            self.assertEqual({p.relative_to(release).as_posix() for p in release.rglob('*') if p.is_file()},set(deploy.FILES))
+            self.assertEqual({p.relative_to(release).as_posix() for p in release.rglob('*') if p.is_file()},
+                             set(deploy.FILES)|{'future_module.py'})
