@@ -7,7 +7,8 @@ from unittest.mock import patch
 
 from analysis import validate_claim
 from gizmo_lab import Lab
-from memory import Memory, assemble_context, ContextBudgetError, message_cost
+from memory import Memory, assemble_context, ContextBudgetError, message_cost, token_bound
+from character import PROFILE_V4_1
 from test_analysis import claim
 
 
@@ -150,8 +151,45 @@ class ActiveMemoryTest(unittest.TestCase):
         self.assertIn('Rome',result)
         self.assertNotIn('Berlin',result)
 
+    def test_old_question_cannot_confirm_ambiguous_pronoun_trait(self):
+        self.relation('USER','has_sister','Emma','My sister is Emma.',object_kind='person')
+        self.store.add_message(self.conversation,'user','Do you know my sister')
+        self.store.add_message(self.conversation,'assistant','I know you mentioned her.')
+        for text in ('The radio was repaired yesterday.','The weather has changed.'):
+            self.store.add_message(self.conversation,'user',text)
+            self.store.add_message(self.conversation,'assistant','I see.')
+        source=self.store.add_message(self.conversation,'user','She was very quiet.')
+        context=self.store.context_for_message(source)
+        anchors=self.store.analysis_anchors(context,source)
+        self.assertEqual(anchors,{'roles':[],'entities':[]})
+        item=claim('Emma','attribute','','very quiet','She was very quiet.')
+        item['property_key']='trait'
+        self.assertEqual(validate_claim(item,'She was very quiet.',context,anchors)['status'],'pending')
+        item['evidence']='very quiet'
+        self.assertEqual(validate_claim(item,'She was very quiet.',context,anchors)['status'],'pending')
+
 
 class ContextTest(unittest.TestCase):
+    def test_recent_complete_turns_survive_competing_archive_budget(self):
+        history=[message for i in range(30) for message in
+                 ({'role':'user','content':f'Question {i} about our invented hallway.'},
+                  {'role':'assistant','content':f'GIZMO suggests looking inside the dusty cupboard {i}.'})]
+        def busy_retrieval(_prompt,budget,_recent):
+            selected=[];used=0
+            for number in range(40):
+                line=json.dumps({'old_archive':number,'detail':'x'*110})
+                cost=token_bound(line)+1
+                if used+cost>budget:break
+                selected.append(line);used+=cost
+            return selected,0
+        messages,_,metrics=assemble_context(PROFILE_V4_1.read_text(encoding='utf-8'),
+            'clock','lets go',history,busy_retrieval,
+            {'num_ctx':8192,'num_predict':768,'memory_token_budget':900,'lean_core_enabled':True})
+        self.assertIn(history[-1],messages)
+        self.assertIn(history[-2],messages)
+        self.assertGreaterEqual(metrics['history_messages'],4)
+        self.assertLessEqual(metrics['input_bound']+metrics['output_reserved']+metrics['template_reserved'],8192)
+
     def test_budget_retains_whole_turns_and_can_exceed_twenty_messages(self):
         history=[message for i in range(30) for message in [{'role':'user','content':str(i)},{'role':'assistant','content':'OK'}]]
         messages,_,metrics=assemble_context('identity','clock','hello',history,lambda *_:([],0),{'num_ctx':8192,'num_predict':128})

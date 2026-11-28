@@ -43,6 +43,29 @@ class StoryLiteTest(unittest.TestCase):
         self.assertEqual(lite.route('Tell me a joke about a radio.'),'normal')
         self.assertEqual(lite.route('I inspect the brass hatch carefully.'),'action')
 
+    def test_short_assent_needs_immediate_fictional_proposal(self):
+        row={'id':'synthetic','status':'active','opening_reply':'A public opening.',
+             'opening_scene':'A brass hatch stands beside a silver radio.'}
+        lite=self.lite(row)
+        proposal='We could investigate the dusty cupboard in the hallway.'
+        for assent in ('lets go',"let's go",'show me','what happens next',
+                       'open it',"yes, let's do it",'lets goo'):
+            self.assertEqual(lite.route(assent,proposal),'followup',assent)
+            self.assertEqual(lite.route(assent,'We could update the settings now.'),'normal',assent)
+            self.assertEqual(lite.route(assent),'normal',assent)
+        self.assertEqual(lite.route('lets go',
+            "I bet there's something behind those old coats in the hallway.",
+            'Imagine a dusty cupboard; suggest we explore it together.'),'followup')
+
+    def test_short_assent_releases_matching_prepared_scene(self):
+        row={'id':'synthetic','status':'prepared','opening_reply':None,
+             'opening_scene':'A dusty cupboard stands in the hallway.',
+             'created_at':datetime.now(timezone.utc).isoformat(),'mode':'standalone',
+             'turn':0,'library_version':'1.1.synthetic'}
+        lite=self.lite(row)
+        self.assertEqual(lite.route('lets go','We could investigate the dusty cupboard.'),'release')
+        self.assertEqual(lite.route('lets go','We could explore a hidden lighthouse.'),'followup')
+
     def test_pause_aborts_a_registered_local_connection(self):
         lite=self.lite(None)
         class Socket:

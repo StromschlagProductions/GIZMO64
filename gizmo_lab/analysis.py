@@ -74,7 +74,8 @@ def validate_claim(claim, source, context=None, anchors=None):
     if not 0<=confidence<=1 or not claim['subject'].strip() or (not claim['object'].strip() and not claim['value'].strip()):
         return None
     speculative,fictional=source_flags(source)
-    pronoun=bool(re.match(r'\s*(she|he|they|her|his|their|sie|er|ihr|ihre|sein|seine)\b',evidence,re.I))
+    pronoun=bool(re.match(r'\s*(she|he|they|her|his|their|sie|er|ihr|ihre|sein|seine)\b',evidence,re.I) or
+                 re.match(r'\s*(she|he|they|her|his|their|sie|er|ihr|ihre|sein|seine)\b',source,re.I))
     resolved=False
     if pronoun and named_role:
         resolved=True

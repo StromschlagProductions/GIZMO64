@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from difflib import SequenceMatcher
 import http.client
 import json
 import secrets
@@ -22,6 +23,31 @@ STOPWORDS={'the','and','this','that','with','from','have','what','when','where',
 def topic_words(text):
     return {word.casefold() for word in re.findall(r'\b\w{4,}\b',text)
             if word.casefold() not in STOPWORDS}
+
+
+def accepts_previous_scene(prompt,previous_assistant,previous_user=None):
+    """A short assent only matters after GIZMO just proposed a fictional scene."""
+    if not previous_assistant:return False
+    text=prompt.strip().casefold().replace('’',"'")
+    if len(text)>48:return False
+    text=re.sub(r'[^\w\s\']',' ',text)
+    text=' '.join(text.split())
+    approvals=("lets go","let's go","let us go","show me","what happens next",
+               "open it","yes let's do it","yes lets do it","let's do it","lets do it")
+    if not any(SequenceMatcher(None,text,item).ratio()>=.83 for item in approvals):
+        return False
+    prior=previous_assistant.casefold()
+    scene=bool(re.search(r'\b(?:fiction|story|adventure|mystery|imagine|strange|hidden|'
+                         r'dusty|secret|closet|cupboard|hatch|portal|door|attic|basement|'
+                         r'schrank|flur)\b',prior))
+    proposal=bool(re.search(r'\b(?:we|us|our|together|let.s|lets)\b',prior) and
+                  re.search(r'\b(?:could|would|should|might|maybe|perhaps|shall|want|ready|'
+                            r'imagine|suppose)\b',prior))
+    invited_fiction=bool(previous_user and
+        re.search(r'\b(?:imagine|fiction|story|adventure|pretend|invent)\b',previous_user,re.I) and
+        re.search(r'\b(?:suggest|explore|investigate|show|open|what if|picture)\b',previous_user,re.I))
+    concrete_scene=len(topic_words(previous_assistant))>=4
+    return (scene and proposal) or (invited_fiction and concrete_scene)
 
 
 class LocalResponse:
@@ -179,9 +205,10 @@ class StoryLite:
         self.director.validate_reply(row['opening_scene'],row['id'])
         return row
 
-    def route(self,prompt):
+    def route(self,prompt,previous_assistant=None,previous_user=None):
         """Deterministic relevance gate; no model call to choose the route."""
         text=prompt.strip().casefold()
+        accepted=accepts_previous_scene(prompt,previous_assistant,previous_user)
         prepared=self.prepared()
         if prepared:
             if text.startswith('/origin') and prepared['mode']!='connected':
@@ -192,9 +219,10 @@ class StoryLite:
                 return 'start'
             explicit=text.startswith(('/story','/origin'))
             overlap=len(topic_words(prompt)&topic_words(prepared['opening_scene']))
-            if explicit or (overlap>=2 and self.director.intent(prompt,True)=='dialogue'):
+            prior_overlap=len(topic_words(previous_assistant or '')&topic_words(prepared['opening_scene']))
+            if explicit or (overlap>=2 and self.director.intent(prompt,True)=='dialogue') or (accepted and prior_overlap>=2):
                 return 'release'
-            return 'normal'
+            return 'followup' if accepted else 'normal'
         row=self.director.world()
         if row and row['status']=='active' and row['opening_reply']:
             intent=self.director.intent(prompt,True)
@@ -206,7 +234,7 @@ class StoryLite:
             if relevant and intent=='dialogue':return 'dialogue'
         if text.startswith('/origin'):return 'origin'
         if text.startswith(('/story','/adventure')):return 'start'
-        return 'normal'
+        return 'followup' if accepted else 'normal'
 
     def commit_release(self,world_id,reply):
         self.director.validate_reply(reply,world_id)

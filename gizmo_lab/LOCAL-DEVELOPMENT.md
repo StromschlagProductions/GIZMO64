@@ -32,6 +32,8 @@ LAB 0.9.5 ergänzt `V4.1 fixed examples` als Standard. V4.1 wird unverändert al
 
 LAB 0.9.6 behebt den direkten Abruf bestätigter persönlicher Beziehungen: Die Beziehung wird vor ergänzenden Belegen bereitgestellt; bei einer direkten Frage verdrängen alte Archiv- und Episodeneinträge weder diese Information noch den jüngsten Gesprächsverlauf. V4.1, Story Lite, Modellparameter und das Datenbankschema bleiben unverändert.
 
+LAB 0.9.7 reserviert im unveränderten Kontextfenster Platz für die jüngsten vollständigen Gesprächsrunden. Kurze Zustimmungen zu GIZMOs unmittelbar vorangehendem fiktionalen Vorschlag führen diesen im schnellen Dialogpfad fort; eine passende vorbereitete Szene kann weiterhin freigegeben werden. Der Leerlauf-Generator funktioniert mit synthetischen Daten, erzeugt aber absichtlich keine zweite vorbereitete Welt, solange eine frühere Welt aktiv ist. Mehrdeutige Pronomen aus älteren oder als Frage formulierten Bezügen werden nicht als bestätigte Eigenschaften gespeichert. Ein nachweislich falsch zugeordneter produktiver Eintrag wurde nach lokaler Sicherung einmalig deaktiviert; andere Erinnerungen blieben unverändert.
+
 Die einmalige lokale Installation (Git-Pfad bei Bedarf anpassen):
 
 ```powershell

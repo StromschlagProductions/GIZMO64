@@ -429,9 +429,14 @@ class Lab:
                 if context is None and self.story_lite:
                     self.story_lite.pause()
                     lite_paused=True
-                    lite_route=self.story_lite.route(prompt)
+                    previous=self.memory.db.execute('SELECT role,text FROM messages WHERE conversation_id=? ORDER BY id DESC LIMIT 2',(self.conversation_id,)).fetchall()
+                    prior_assistant=previous[0]['text'] if previous and previous[0]['role']=='assistant' else None
+                    prior_user=previous[1]['text'] if len(previous)>1 and previous[1]['role']=='user' else None
+                    lite_route=self.story_lite.route(prompt,prior_assistant,prior_user)
                     if lite_route=='release':
                         return self._story_lite_release(prompt,on_text,model,origin)
+                    if lite_route=='followup':
+                        return self._chat(prompt,context,on_text,model,origin,continuation=prior_assistant)
                     if lite_route!='normal':
                         if self.analyzer:self.analyzer.pause()
                         try:return self._story_chat(prompt,lite_route,on_text,model,origin)
@@ -448,7 +453,7 @@ class Lab:
                 return self._chat(prompt,context,on_text,model,origin)
             finally:
                 if lite_paused and self.story_lite and not self.stop_event.is_set():
-                    self.story_lite.resume(normal_turn=lite_route=='normal')
+                    self.story_lite.resume(normal_turn=lite_route in ('normal','followup'))
                 self.chat_done.set()
 
     def _story_lite_release(self,prompt,on_text,model,origin):
@@ -616,7 +621,7 @@ class Lab:
         return result
 
     def _chat(self, prompt, context=None, on_text=None, model=None, origin='terminal',
-              response_tokens=None,context_window=None):
+              response_tokens=None,context_window=None,continuation=False):
         if self.analyzer:
             self.analyzer.pause()
         model = model or self.model or self.config.get('model', DEFAULT_MODEL)
@@ -631,14 +636,14 @@ class Lab:
             retrieve=self.memory.retrieve if context is None else lambda *_:([],0)
             budget_config=self.config if context_window is None else {**self.config,'num_ctx':context_window}
             try:
-                messages,retrieved,budget=assemble_context(personality,clock,prompt,history,retrieve,budget_config)
+                messages,retrieved,budget=assemble_context(personality,clock,prompt,history,retrieve,budget_config,continuation=continuation)
             except ContextBudgetError:
                 if context_window is None or int(self.config.get('num_ctx') or 8192)<=context_window:
                     raise
                 # Keep the full personal profile if the shared fast runner is
                 # too small. The configured window remains the safe fallback.
                 context_window=None
-                messages,retrieved,budget=assemble_context(personality,clock,prompt,history,retrieve,self.config)
+                messages,retrieved,budget=assemble_context(personality,clock,prompt,history,retrieve,self.config,continuation=continuation)
         except Exception:
             if self.analyzer: self.analyzer.resume()
             raise

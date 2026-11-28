@@ -18,7 +18,7 @@ class MemoryDiagnosticsTest(unittest.TestCase):
     def add(self,role,text):
         return self.memory.add_message(self.conversation,role,text)
 
-    def test_name_after_intervening_topics_links_to_user_role(self):
+    def test_name_after_intervening_topics_does_not_confirm_old_role(self):
         self.add('user','I have a sister.')
         self.add('assistant','Understood.')
         for topic in ('I restored a receiver.','The receiver has a wooden case.'):
@@ -27,11 +27,19 @@ class MemoryDiagnosticsTest(unittest.TestCase):
         context=self.memory.context_for_message(source)
         anchors=self.memory.analysis_anchors(context,source)
         claim=contextual_name_claim(context[-1]['text'],context,anchors)
-        self.assertEqual((claim['predicate'],claim['object'],claim['status']),('has_sister','Elena','active'))
-        self.memory.add_relation('USER','person','has_sister','Elena','person','',source,claim['evidence'],1,'active')
+        self.assertEqual(anchors,{'roles':[],'entities':[]})
+        self.assertIsNone(claim)
         recalled='\n'.join(self.memory.retrieve("What is my sister's name?")[0])
-        self.assertIn('Elena',recalled)
-        self.assertNotIn('no confirmed relationship',recalled)
+        self.assertNotIn('Elena',recalled)
+
+    def test_name_immediately_after_unambiguous_role_still_links(self):
+        self.add('user','I have a sister.')
+        self.add('assistant','Understood.')
+        source=self.add('user','Her name is Elena.')
+        context=self.memory.context_for_message(source)
+        anchors=self.memory.analysis_anchors(context,source)
+        claim=contextual_name_claim(context[-1]['text'],context,anchors)
+        self.assertEqual((claim['predicate'],claim['object'],claim['status']),('has_sister','Elena','active'))
 
     def test_historical_pet_anchor_ignores_later_dog(self):
         first=self.add('user','My dog is Pippa.')
